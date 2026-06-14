@@ -186,7 +186,10 @@ func GetObject(bucket, key string) (*OSSObject, error) {
 // binary/octet-stream.
 func PutObject(bucket, key, contentType string, data []byte) error {
 	client := ensureClient()
-	b := client.Bucket(bucket)
+	b, err := client.Bucket(bucket)
+	if err != nil {
+		return fmt.Errorf("oss PutObject(%s/%s): %w", bucket, key, err)
+	}
 
 	opts := []aliyun_oss.Option{}
 	if contentType != "" {
