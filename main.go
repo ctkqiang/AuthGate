@@ -14,12 +14,9 @@ func main() {
 	for _, _provider := range providers {
 		switch _provider {
 		case model.AWS:
-			aws.InitializeLambdaService()
-			utilities.LogProgress(
-				"AWS",
-				"HandleRequest",
-				"Start",
-			)
+			if err := aws.InitializeLambdaService(); err != nil {
+				utilities.LogProgress("AWS", "InitializeLambdaService", err.Error())
+			}
 		case model.ALIYUN:
 			utilities.LogProgress(
 				"Aliyun",
