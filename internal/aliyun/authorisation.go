@@ -20,6 +20,7 @@ type Account struct {
 	region    string
 	keyID     string
 	keySecret string
+	endpoint  string
 	identity  CallerIdentity // verified caller identity from STS
 	ready     bool           // true after successful Init()
 	mu        sync.RWMutex   // protects all fields
@@ -59,6 +60,7 @@ func Initialize() error {
 	account.region = authKeys.Region
 	account.keyID = authKeys.AccessKeyID
 	account.keySecret = authKeys.SecretAccessKey
+	account.endpoint = authKeys.Endpoint
 
 	// Verify credentials by calling STS GetCallerIdentity.
 	stsClient, err := aliyun_sts.NewClientWithAccessKey(
@@ -139,6 +141,20 @@ func (a *Account) AccessKeyID() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.keyID
+}
+
+// AccessKeySecret returns the AccessKey secret used for authentication.
+func (a *Account) AccessKeySecret() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.keySecret
+}
+
+// Endpoint returns the OSS endpoint configured for this account.
+func (a *Account) Endpoint() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.endpoint
 }
 
 // Identity returns the verified caller identity. Panics if the account

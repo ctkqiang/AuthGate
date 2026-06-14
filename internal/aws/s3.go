@@ -59,12 +59,12 @@ type S3ObjectSummary struct {
 
 // S3Object represents the full output of a GetObject call.
 type S3Object struct {
-	Body         []byte            `json:"body"`
-	ContentType  string            `json:"content_type"`
-	ContentLength int64            `json:"content_length"`
-	ETag         string            `json:"etag"`
-	LastModified time.Time         `json:"last_modified"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
+	Body          []byte            `json:"body"`
+	ContentType   string            `json:"content_type"`
+	ContentLength int64             `json:"content_length"`
+	ETag          string            `json:"etag"`
+	LastModified  time.Time         `json:"last_modified"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
 }
 
 // PresignedURLResult carries the temporary URL and its expiry instant.
@@ -247,4 +247,3 @@ func GeneratePresignedURL(ctx context.Context, bucket, key string, ttl time.Dura
 		fmt.Sprintf("bucket=%s key=%s ttl=%s", bucket, key, ttl))
 	return result, nil
 }
-

@@ -17,6 +17,7 @@ func AWSCredentials() (model.AWSAuthorisationKeys, error) {
 		AccessKeyID:     toString(config.GetValue("aws.access_key_id")),
 		SecretAccessKey: toString(config.GetValue("aws.access_key_secret")),
 		Region:          toString(config.GetValue("aws.region")),
+		Bucket:          toString(config.GetValue("aws.bucket")),
 	}
 
 	if creds.AccessKeyID == "" {
@@ -31,8 +32,6 @@ func AWSCredentials() (model.AWSAuthorisationKeys, error) {
 	return creds, nil
 }
 
-// AliyunCredentials reads the Alibaba Cloud credential values from
-// config.toml's [aliyun] section via config.GetValue.
 func AliyunCredentials() (model.AliyunAuthorisationKeys, error) {
 	creds := model.AliyunAuthorisationKeys{
 		AccessKeyID:     toString(config.GetValue("aliyun.access_key_id")),
@@ -52,6 +51,23 @@ func AliyunCredentials() (model.AliyunAuthorisationKeys, error) {
 		return creds, errors.New("aliyun.region is not set in config.toml")
 	}
 	return creds, nil
+}
+
+// KeysConfig reads the [keys] section from config.toml and returns the
+// paths used to locate the JWT signing PEM files in object storage.
+func KeysConfig() (model.KeysConfig, error) {
+	cfg := model.KeysConfig{
+		PrivateKeyPath: toString(config.GetValue("keys.private_key_path")),
+		PublicKeyPath:  toString(config.GetValue("keys.public_key_path")),
+	}
+
+	if cfg.PrivateKeyPath == "" {
+		return cfg, errors.New("keys.private_key_path is not set in config.toml")
+	}
+	if cfg.PublicKeyPath == "" {
+		return cfg, errors.New("keys.public_key_path is not set in config.toml")
+	}
+	return cfg, nil
 }
 
 // toString is a small helper that type-asserts config.GetValue's
