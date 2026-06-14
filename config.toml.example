@@ -12,3 +12,22 @@ dbname = "authgate"
 port = 3306
 max_connections = 50
 max_idle_connections = 10
+
+[supported_providers]
+aliyun = true
+aws = true
+azure = false
+gcp = false
+tencent_cloud = false
+
+[aws]
+region = "us-east-1"
+access_key_id = "your_aws_access_key_id"
+access_key_secret = "your_aws_access_key_secret"
+
+[aliyun]
+region = "cn-hangzhou"
+access_key_id = "your_aliyun_access_key_id"
+access_key_secret = "your_aliyun_access_key_secret"
+bucket = "your-bucket-name"
+endpoint = "oss-cn-hangzhou.aliyuncs.com"

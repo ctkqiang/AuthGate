@@ -4,6 +4,7 @@ import (
 	"authgate/internal/aws"
 	"authgate/internal/config"
 	"authgate/internal/model"
+	"authgate/internal/utilities"
 )
 
 func main() {
@@ -14,10 +15,46 @@ func main() {
 		switch _provider {
 		case model.AWS:
 			aws.InitializeLambdaService()
+			utilities.LogProgress(
+				"AWS",
+				"HandleRequest",
+				"Start",
+			)
+		case model.ALIYUN:
+			utilities.LogProgress(
+				"Aliyun",
+				"HandleRequest",
+				"Start",
+			)
+		case model.GCP:
+			utilities.LogProgress(
+				"GCP",
+				"HandleRequest",
+				"Start",
+			)
+		case model.Azure:
+			utilities.LogProgress(
+				"Azure",
+				"HandleRequest",
+				"Start",
+			)
+		case model.TENCENT_CLOUD:
+			utilities.LogProgress(
+				"TencentCloud",
+				"HandleRequest",
+				"Start",
+			)
+		default:
+			panic("Please provide at least one cloud provider")
 		}
 	}
 }
 
+// SupportedProvider reads the [supported_providers] section from config.toml
+// and returns the list of cloud platforms that are enabled (set to true).
+// It maps each config key (e.g. "supported_providers.aws") to its corresponding
+// model.CloudPlatform constant. Providers set to false or missing from config
+// are excluded from the result. Returns an empty slice if no provider is enabled.
 func SupportedProvider() []model.CloudPlatform {
 	var enabled []model.CloudPlatform
 	type providerEntry struct {
