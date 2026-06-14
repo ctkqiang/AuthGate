@@ -18,7 +18,7 @@ import (
 
 const (
 	// Addr is the local development listen address.
-	Addr = "0.0.0.0:8080"
+	Addr = "0.0.0.0:8000"
 
 	// IndexPath  is the root health-check endpoint.
 	IndexPath = "/"

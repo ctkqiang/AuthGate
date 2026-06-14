@@ -2,7 +2,7 @@
 //
 // Two execution modes share a single entry point:
 //
-//	Local development  —  net/http server on 0.0.0.0:8080
+//	Local development  —  net/http server on 0.0.0.0:8000
 //	AWS Lambda         —  lambda.Start(HandleAPIGatewayEvent)
 //
 // The _LAMBDA_SERVER_PORT and AWS_LAMBDA_RUNTIME_API environment
@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	addr = "0.0.0.0:8080"
+	addr = "0.0.0.0:8000"
 
 	IndexPath  = "/"
 	HealthPath = "/health"
@@ -54,9 +54,11 @@ func newResponseRecorder() *responseRecorder {
 }
 
 func (r *responseRecorder) Header() http.Header { return r.header }
+
 func (r *responseRecorder) Write(b []byte) (int, error) {
 	return r.body.Write(b)
 }
+
 func (r *responseRecorder) WriteHeader(code int) { r.statusCode = code }
 
 // isLambdaRuntime reports whether the process is executing inside the
