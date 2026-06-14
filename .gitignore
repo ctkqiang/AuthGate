@@ -1,0 +1,64 @@
+# ── Go ──────────────────────────────────────────────────────────
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+*.testbin
+/vendor/
+/tmp/
+
+# Go workspace & build cache
+go.work
+go.work.sum
+*.o
+
+# 编译产物 — 根据 go.mod 中的 module name，binary 默认为 authgate
+/authgate
+/authgate.exe
+
+# ── Lambda 部署包 ───────────────────────────────────────────────
+bootstrap
+deployment.zip
+function.zip
+
+# ── IDE / Editor ────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.nyc_output/
+.netbeans/
+*.sublime-workspace
+*.sublime-project
+
+# ── macOS ───────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ── Environment / Secrets ───────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials
+config.json
+
+# ── Logs / Temp ─────────────────────────────────────────────────
+*.log
+log/
+/tmp/
