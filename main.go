@@ -1,9 +1,11 @@
 package main
 
 import (
+	"authgate/internal/aliyun"
 	"authgate/internal/aws"
 	"authgate/internal/config"
 	"authgate/internal/model"
+	"authgate/internal/service"
 	"authgate/internal/utilities"
 )
 
@@ -11,40 +13,40 @@ func main() {
 	config.LoadConfigurationFile("config.toml")
 
 	providers := SupportedProvider()
-	for _, _provider := range providers {
-		switch _provider {
+
+	// Initialise every enabled provider.
+	//
+	// In a cloud runtime (AWS Lambda / Aliyun FC) the corresponding
+	// Initialize* call blocks forever because it registers the runtime
+	// handler.  In local mode every call returns immediately.
+	for _, provider := range providers {
+		switch provider {
 		case model.AWS:
 			if err := aws.InitializeLambdaService(); err != nil {
 				utilities.LogProgress("AWS", "InitializeLambdaService", err.Error())
 			}
 		case model.ALIYUN:
-			utilities.LogProgress(
-				"Aliyun",
-				"HandleRequest",
-				"Start",
-			)
+			if err := aliyun.InitializeFCService(); err != nil {
+				utilities.LogProgress("Aliyun", "InitializeFCService", err.Error())
+			}
 		case model.GCP:
-			utilities.LogProgress(
-				"GCP",
-				"HandleRequest",
-				"Start",
-			)
+			utilities.LogProgress("GCP", "HandleRequest", "Start")
 		case model.Azure:
-			utilities.LogProgress(
-				"Azure",
-				"HandleRequest",
-				"Start",
-			)
+			utilities.LogProgress("Azure", "HandleRequest", "Start")
 		case model.TENCENT_CLOUD:
-			utilities.LogProgress(
-				"TencentCloud",
-				"HandleRequest",
-				"Start",
-			)
+			utilities.LogProgress("TencentCloud", "HandleRequest", "Start")
 		default:
 			panic("Please provide at least one cloud provider")
 		}
 	}
+
+	// If a cloud runtime took over, we never reach this point.
+	// Otherwise, start a single local HTTP server on Addr.
+	if !service.IsLocalMode() {
+		return
+	}
+
+	service.StartLocalServer()
 }
 
 // SupportedProvider reads the [supported_providers] section from config.toml

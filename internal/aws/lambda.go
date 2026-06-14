@@ -8,10 +8,14 @@
 // The _LAMBDA_SERVER_PORT and AWS_LAMBDA_RUNTIME_API environment
 // variables are set by the Lambda runtime; their presence determines
 // which mode [InitializeLambdaService] operates in.
+//
+// Route definitions live in [service.Routes] and are shared with the
+// local server and all other cloud adapters.
 package aws
 
 import (
 	"authgate/internal/model"
+	"authgate/internal/service"
 	"authgate/internal/utilities"
 	"bytes"
 	"context"
@@ -19,9 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 
 	aws_lambda_http "github.com/aws/aws-lambda-go/lambda"
 )
@@ -32,23 +34,6 @@ const (
 	IndexPath  = "/"
 	HealthPath = "/health"
 )
-
-// routeEntry pairs a URL path with its handler function.
-type routeEntry struct {
-	path    string
-	handler http.HandlerFunc
-}
-
-// lambdaRoutes is the route table used by HandleAPIGatewayEvent
-// for direct Lambda dispatch.
-var lambdaRoutes []routeEntry
-
-func init() {
-	lambdaRoutes = []routeEntry{
-		{IndexPath, model.Index},
-		{HealthPath, model.Health},
-	}
-}
 
 // responseRecorder is a lightweight http.ResponseWriter implementation
 // that captures status code, headers, and body in memory. It is used by
@@ -86,51 +71,24 @@ func isLambdaRuntime() bool {
 
 // InitializeLambdaService starts the service in the appropriate mode:
 //   - AWS Lambda → registers HandleAPIGatewayEvent as the Lambda handler
-//   - Local      → starts a net/http server on 0.0.0.0:8080 with graceful
-//     shutdown on SIGINT / SIGTERM
+//     and blocks forever.
+//   - Local      → returns immediately; the caller (main.go) should start
+//     a single unified HTTP server to avoid port conflicts.
 func InitializeLambdaService() error {
 	if isLambdaRuntime() {
+		utilities.LogProgress("Lambda", "Runtime detected", "starting lambda.Start")
 		aws_lambda_http.Start(HandleAPIGatewayEvent)
 		return nil
 	}
 
-	utilities.LogProgress("HTTP", "Starting local server", addr)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc(IndexPath, logRequest(model.Index))
-	mux.HandleFunc(HealthPath, logRequest(model.Health))
-
-	srv := &http.Server{Addr: addr, Handler: mux}
-
-	go func() {
-		stop := make(chan os.Signal, 1)
-		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-		<-stop
-		utilities.LogProgress("HTTP", "Shutting down gracefully", "signal received")
-		srv.Close()
-	}()
-
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("local server failed: %w", err)
-	}
+	utilities.LogProgress("Lambda", "Init", "local mode — skipping HTTP server (managed by main.go)")
 	return nil
-}
-
-// logRequest wraps an http.HandlerFunc with a request log line.
-func logRequest(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		utilities.LogProgress(
-			"http",
-			r.Method+" "+r.URL.Path,
-			fmt.Sprintf("source=%s", r.RemoteAddr),
-		)
-		next(w, r)
-	}
 }
 
 // HandleAPIGatewayEvent is the Lambda handler for API Gateway
 // (REST / HTTP API / Function URL) requests. It dispatches to
-// the matching route based on the request path.
+// the matching route defined in [service.Routes] based on the
+// request path.
 func HandleAPIGatewayEvent(ctx context.Context, event model.APIGatewayEvent) (map[string]any, error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -162,9 +120,9 @@ func HandleAPIGatewayEvent(ctx context.Context, event model.APIGatewayEvent) (ma
 
 	w := newResponseRecorder()
 	matched := false
-	for _, entry := range lambdaRoutes {
-		if event.Path == entry.path {
-			entry.handler(w, req)
+	for _, entry := range service.Routes {
+		if event.Path == entry.Path {
+			entry.Handler(w, req)
 			matched = true
 			break
 		}
