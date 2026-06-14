@@ -53,10 +53,10 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+config.toml
+config.json
 *.pem
 *.key
-credentials
-config.json
 
 # ── Logs / Temp ─────────────────────────────────────────────────
 *.log
