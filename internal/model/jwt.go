@@ -1,8 +1,12 @@
 package model
 
 import (
+	"crypto/rsa"
 	"errors"
 	"time"
+
+	jwtlib "github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 // JWT represents a JSON Web Token with security-oriented fields.
@@ -102,4 +106,72 @@ func (j JWT) WithIPBinding(ip string) JWT {
 func (j JWT) WithUserAgentBinding(ua string) JWT {
 	j.UserAgent = ua
 	return j
+}
+
+// NewAccessToken creates an access token JWT bound to the given user.
+// Access tokens are short-lived (default 3600s) and carry standard
+// API authorization scopes.
+func NewAccessToken(subject string, ip, ua string) JWT {
+	now := time.Now().Unix()
+	return JWT{
+		JWTID:       uuid.NewString(),
+		AccessToken: "",
+		ExpiresIn:   3600,
+		TokenType:   "Bearer",
+		Scopes:      []string{"api:access"},
+		Issuer:      "authgate",
+		Subject:     subject,
+		IssuedAt:    now,
+		NotBefore:   now,
+		CreatedAt:   now,
+		IPAddress:   ip,
+		UserAgent:   ua,
+	}
+}
+
+// NewRefreshToken creates a long-lived refresh token (default 604800s = 7 days)
+// bound to the given user. Refresh tokens have a narrower scope and are used
+// solely to obtain new access tokens.
+func NewRefreshToken(subject string, ip, ua string) JWT {
+	now := time.Now().Unix()
+	return JWT{
+		JWTID:        uuid.NewString(),
+		RefreshToken: "",
+		ExpiresIn:    604800,
+		TokenType:    "Bearer",
+		Scopes:       []string{"token:refresh"},
+		Issuer:       "authgate",
+		Subject:      subject,
+		IssuedAt:     now,
+		NotBefore:    now,
+		CreatedAt:    now,
+		IPAddress:    ip,
+		UserAgent:    ua,
+	}
+}
+
+// Sign serialises the JWT to a signed RS256 compact JWS using the
+// provided RSA private key. It returns the compact serialisation
+// string and any signing error.
+func (j JWT) Sign(privateKey *rsa.PrivateKey) (string, error) {
+	claims := jwtlib.MapClaims{
+		"jti":        j.JWTID,
+		"sub":        j.Subject,
+		"iss":        j.Issuer,
+		"iat":        j.IssuedAt,
+		"nbf":        j.NotBefore,
+		"exp":        j.CreatedAt + int64(j.ExpiresIn),
+		"created_at": j.CreatedAt,
+		"token_type": j.TokenType,
+		"scopes":     j.Scopes,
+		"ip_address": j.IPAddress,
+		"user_agent": j.UserAgent,
+	}
+
+	token := jwtlib.NewWithClaims(jwtlib.SigningMethodRS256, claims)
+	tokenString, err := token.SignedString(privateKey)
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
 }

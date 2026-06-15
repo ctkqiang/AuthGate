@@ -8,7 +8,7 @@ package service
 
 import (
 	"authgate/internal/config"
-	"authgate/internal/model"
+	"authgate/internal/handler"
 	"authgate/internal/utilities"
 	"fmt"
 	"net/http"
@@ -28,9 +28,9 @@ type RouteEntry struct {
 // handler, and Aliyun FC handler.  Add new endpoints here to make them
 // available in every environment.
 var Routes = []RouteEntry{
-	{Path: config.IndexPath, Handler: model.Index},
-	{Path: config.HealthPath, Handler: model.Health},
-	{Path: config.AuthRegister, Handler: model.AuthRegister},
+	{Path: config.IndexPath, Handler: handler.Index},
+	{Path: config.HealthPath, Handler: handler.Health},
+	{Path: config.AuthRegister, Handler: handler.AuthRegister},
 }
 
 // IsLocalMode reports whether none of the supported cloud runtimes
