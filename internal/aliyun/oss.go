@@ -45,9 +45,7 @@ func ensureClient() *aliyun_oss.Client {
 	return ossClient
 }
 
-// ---------------------------------------------------------------------------
 // Domain types
-// ---------------------------------------------------------------------------
 
 // OSSBucketSummary is a lightweight descriptor returned by ListBuckets.
 type OSSBucketSummary struct {
@@ -229,9 +227,7 @@ func DeleteObject(bucket, key string) error {
 	return nil
 }
 
-// ---------------------------------------------------------------------------
 // Presigned URL
-// ---------------------------------------------------------------------------
 
 // GeneratePresignedURL produces a time-limited GET URL for the specified
 // object. The returned URL embeds the caller's AccessKey credentials as

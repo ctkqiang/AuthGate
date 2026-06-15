@@ -38,10 +38,6 @@ func ensureClient() *aws_s3.Client {
 	return s3Client
 }
 
-// ---------------------------------------------------------------------------
-// Domain types
-// ---------------------------------------------------------------------------
-
 // S3BucketSummary is a lightweight descriptor returned by ListBuckets.
 type S3BucketSummary struct {
 	Name         string    `json:"name"`
@@ -72,10 +68,6 @@ type PresignedURLResult struct {
 	URL       string    `json:"url"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
-
-// ---------------------------------------------------------------------------
-// Bucket operations
-// ---------------------------------------------------------------------------
 
 // ListBuckets returns every S3 bucket the authenticated account can see.
 func ListBuckets(ctx context.Context) ([]S3BucketSummary, error) {
@@ -135,10 +127,6 @@ func ListObjects(ctx context.Context, bucket, prefix string, maxKeys int32) ([]S
 		fmt.Sprintf("bucket=%s prefix=%s count=%d", bucket, prefix, len(summaries)))
 	return summaries, nil
 }
-
-// ---------------------------------------------------------------------------
-// Object operations
-// ---------------------------------------------------------------------------
 
 // GetObject downloads the full content of a single S3 object into memory.
 // Callers handling large payloads should consider streaming with the SDK
@@ -215,10 +203,6 @@ func DeleteObject(ctx context.Context, bucket, key string) error {
 		fmt.Sprintf("bucket=%s key=%s", bucket, key))
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// Presigned URL
-// ---------------------------------------------------------------------------
 
 // GeneratePresignedURL produces a time-limited GET URL for the specified
 // object. The returned URL embeds the caller's IAM credentials as signed

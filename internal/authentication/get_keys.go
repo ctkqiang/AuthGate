@@ -142,9 +142,7 @@ func downloadFromOSS(cfg model.KeysConfig) ([]byte, []byte, error) {
 	return privObj.Body, pubObj.Body, nil
 }
 
-// ---------------------------------------------------------------------------
 // PEM parsing
-// ---------------------------------------------------------------------------
 
 func parsePrivateKey(pemData []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(pemData)
@@ -194,9 +192,7 @@ func parsePublicKey(pemData []byte) (*rsa.PublicKey, error) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // Accessors (backward compatible)
-// ---------------------------------------------------------------------------
 
 // GetPrivateKey returns the cached RSA private key. Panics if LoadKeys
 // has not been called successfully.

@@ -3,6 +3,8 @@ package model
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/google/uuid"
 )
 
 // APIGatewayEvent represents an API Gateway proxy integration event.
@@ -34,7 +36,25 @@ func Health(w http.ResponseWriter, r *http.Request) {
 
 func AuthRegister(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"status": "success",
+
+	actor := &Actor{
+		Idenitifier: uuid.New().String(),
+		IpAddress:   r.RemoteAddr,
+		UserAgent:   r.UserAgent(),
+	}
+
+	jwtResponse := JwtResponse{
+		AccessToken:  "",
+		RefreshToken: "",
+		ExpiresIn:    3600,
+		EventType:    EventTypeAuthRegister,
+		Actor:        actor,
+	}
+
+	json.NewEncoder(w).Encode(Response{
+		StatusCode: 200,
+		Signature:  "",
+		Event:      nil,
+		Data:       jwtResponse,
 	})
 }
