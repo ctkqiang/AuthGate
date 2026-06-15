@@ -28,13 +28,6 @@ import (
 	aws_lambda_http "github.com/aws/aws-lambda-go/lambda"
 )
 
-const (
-	addr = "0.0.0.0:8000"
-
-	IndexPath  = "/"
-	HealthPath = "/health"
-)
-
 // responseRecorder is a lightweight http.ResponseWriter implementation
 // that captures status code, headers, and body in memory. It is used by
 // HandleAPIGatewayEvent to bridge the stdlib handler signature to the
@@ -90,8 +83,10 @@ func InitializeLambdaService() error {
 // HandleAPIGatewayEvent is the Lambda handler for API Gateway
 // (REST / HTTP API / Function URL) requests. It dispatches to
 // the matching route defined in [service.Routes] based on the
-// request path.
+// request path. Responses are structured as [model.Response].
 func HandleAPIGatewayEvent(ctx context.Context, event model.APIGatewayEvent) (map[string]any, error) {
+	var resp model.Response
+
 	defer func() {
 		if r := recover(); r != nil {
 			utilities.Error("lambda: panic in route handler: %v", r)
@@ -105,8 +100,9 @@ func HandleAPIGatewayEvent(ctx context.Context, event model.APIGatewayEvent) (ma
 		strings.NewReader(event.Body),
 	)
 	if err != nil {
-		return apiGatewayResponse(http.StatusBadRequest, map[string]string{
-			"error": fmt.Sprintf("invalid request: %v", err),
+		return apiGatewayResponse(http.StatusBadRequest, model.Response{
+			StatusCode: model.StatusCode(http.StatusBadRequest),
+			Data:       map[string]string{"error": fmt.Sprintf("invalid request: %v", err)},
 		}), nil
 	}
 
@@ -129,39 +125,53 @@ func HandleAPIGatewayEvent(ctx context.Context, event model.APIGatewayEvent) (ma
 			break
 		}
 	}
+
 	if !matched {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error": "not found"}`))
+		json.NewEncoder(w).Encode(model.Response{
+			StatusCode: model.StatusCode(http.StatusNotFound),
+			Data:       map[string]string{"error": "not found"},
+		})
 	}
 
-	return apiGatewayResponse(w.statusCode, w.body.String()), nil
+	// Attempt to unmarshal the route handler's output as model.Response.
+	// If it fails (legacy handler writing raw text), wrap it.
+
+	if err := json.Unmarshal(w.body.Bytes(), &resp); err != nil || resp.StatusCode == 0 {
+		resp = model.Response{
+			StatusCode: model.StatusCode(w.statusCode),
+			Data:       w.body.String(),
+		}
+	}
+
+	return apiGatewayResponse(w.statusCode, resp), nil
 }
 
 // apiGatewayResponse builds the Lambda integration response envelope
-// expected by API Gateway.
-func apiGatewayResponse(statusCode int, body any) map[string]any {
-	var bodyStr string
-	switch v := body.(type) {
-	case string:
-		bodyStr = v
-	case []byte:
-		bodyStr = string(v)
-	default:
-		b, _ := json.Marshal(v)
-		bodyStr = string(b)
+// expected by API Gateway, including security headers from [model.DefaultSecurityHeaders].
+// The body is always a serialised [model.Response].
+func apiGatewayResponse(statusCode int, resp model.Response) map[string]any {
+	bodyBytes, err := json.Marshal(resp)
+	if err != nil {
+		bodyBytes = []byte(`{"status_code":500,"data":"internal marshal error"}`)
 	}
+
+	headers := model.DefaultSecurityHeaders.ToMap()
+	headers["Content-Type"] = "application/json"
+
 	return map[string]any{
 		"statusCode": statusCode,
-		"headers": map[string]string{
-			"Content-Type": "application/json",
-		},
-		"body": bodyStr,
+		"headers":    headers,
+		"body":       string(bodyBytes),
 	}
 }
 
 // LambdaHandleRequest is kept for backward compatibility with the
 // simple Lambda invocation style (no API Gateway proxy).
-func LambdaHandleRequest(ctx context.Context) (string, error) {
+func LambdaHandleRequest(ctx context.Context) (model.Response, error) {
 	utilities.LogProgress("Lambda", "HandleRequest", "Start")
-	return "200", nil
+	return model.Response{
+		StatusCode: model.StatusCode(http.StatusOK),
+		Data:       "OK",
+	}, nil
 }

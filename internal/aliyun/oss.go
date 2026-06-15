@@ -201,7 +201,13 @@ func PutObject(bucket, key, contentType string, data []byte) error {
 	}
 
 	utilities.LogProgress("oss", "PutObject",
-		fmt.Sprintf("bucket=%s key=%s size=%d", bucket, key, len(data)))
+		fmt.Sprintf(
+			"bucket=%s key=%s size=%d",
+			bucket,
+			key,
+			len(data),
+		),
+	)
 	return nil
 }
 

@@ -20,6 +20,7 @@ import (
 	"authgate/internal/model"
 	"authgate/internal/security"
 	"authgate/internal/utilities"
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -62,6 +63,7 @@ func LoadKeys() error {
 	if err != nil {
 		return fmt.Errorf("load keys: %w", err)
 	}
+
 	pubKey, err := parsePublicKey(pubPEM)
 	if err != nil {
 		return fmt.Errorf("load keys: %w", err)
@@ -75,10 +77,6 @@ func LoadKeys() error {
 			provider, keysCfg.PrivateKeyPath, keysCfg.PublicKeyPath))
 	return nil
 }
-
-// ---------------------------------------------------------------------------
-// Provider detection
-// ---------------------------------------------------------------------------
 
 func detectProvider() (supportedProvider, error) {
 	awsCfg, _ := security.AWSCredentials()
@@ -95,10 +93,6 @@ func detectProvider() (supportedProvider, error) {
 		return providerNone, errors.New("no supported object-storage provider configured (check [aws]/[aliyun] in config.toml)")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// PEM download
-// ---------------------------------------------------------------------------
 
 func downloadPEMs(provider supportedProvider, cfg model.KeysConfig) (privPEM, pubPEM []byte, err error) {
 	switch provider {
@@ -118,11 +112,12 @@ func downloadFromS3(cfg model.KeysConfig) ([]byte, []byte, error) {
 	}
 	bucket := awsCreds.Bucket
 
-	privObj, err := aws.GetObject(nil, bucket, cfg.PrivateKeyPath)
+	privObj, err := aws.GetObject(context.Background(), bucket, cfg.PrivateKeyPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("s3 get private key: %w", err)
 	}
-	pubObj, err := aws.GetObject(nil, bucket, cfg.PublicKeyPath)
+
+	pubObj, err := aws.GetObject(context.Background(), bucket, cfg.PublicKeyPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("s3 get public key: %w", err)
 	}

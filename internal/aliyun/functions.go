@@ -14,6 +14,7 @@
 package aliyun
 
 import (
+	"authgate/internal/model"
 	"authgate/internal/service"
 	"authgate/internal/utilities"
 	"bytes"
@@ -24,13 +25,6 @@ import (
 	"os"
 
 	aliyun_fc "github.com/aliyun/fc-runtime-go-sdk/fc"
-)
-
-const (
-	addr = "0.0.0.0:8000"
-
-	IndexPath  = "/"
-	HealthPath = "/health"
 )
 
 // responseRecorder is a lightweight http.ResponseWriter implementation
@@ -88,7 +82,8 @@ func InitializeFCService() error {
 // fcHTTPHandler is the top-level HTTP handler registered with
 // fc.StartHttp. It dispatches to the matching route defined in
 // [service.Routes] based on the request path and handles panics
-// gracefully.
+// gracefully. Security headers from [model.DefaultSecurityHeaders]
+// are applied to every response.
 func fcHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -96,6 +91,12 @@ func fcHTTPHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		}
 	}()
+
+	// Apply security headers to every response.
+	for k, v := range model.DefaultSecurityHeaders.ToMap() {
+		w.Header().Set(k, v)
+	}
+	w.Header().Set("Content-Type", "application/json")
 
 	srcIP := r.Header.Get("X-Forwarded-For")
 	if srcIP == "" {
@@ -110,9 +111,11 @@ func fcHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusNotFound)
-	json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+	json.NewEncoder(w).Encode(model.Response{
+		StatusCode: model.StatusCode(http.StatusNotFound),
+		Data:       map[string]string{"error": "not found"},
+	})
 }
 
 // HandleFCRequest is a generic event-style handler for non-HTTP FC
@@ -134,35 +137,35 @@ func HandleFCRequest(ctx context.Context, event json.RawMessage) (map[string]any
 		source = "unknown"
 	}
 
-	return map[string]any{
-		"statusCode": http.StatusOK,
-		"headers": map[string]string{
-			"Content-Type": "application/json",
+	resp := model.Response{
+		StatusCode: model.StatusCode(http.StatusOK),
+		Data: map[string]string{
+			"source":  source,
+			"message": "event acknowledged",
 		},
-		"body": fmt.Sprintf(`{"source":"%s","message":"event acknowledged"}`, source),
-	}, nil
+	}
+
+	return fcResponse(http.StatusOK, resp), nil
 }
 
 // fcResponse builds the FC HTTP trigger response envelope. While
 // fc.StartHttp writes directly to the http.ResponseWriter, this
 // helper is provided for parity with the AWS lambda.go pattern
-// and for use in unit tests.
-func fcResponse(statusCode int, body any) map[string]any {
-	var bodyStr string
-	switch v := body.(type) {
-	case string:
-		bodyStr = v
-	case []byte:
-		bodyStr = string(v)
-	default:
-		b, _ := json.Marshal(v)
-		bodyStr = string(b)
+// and for use in unit tests, including security headers.
+//
+// The body is always a serialised [model.Response].
+func fcResponse(statusCode int, resp model.Response) map[string]any {
+	bodyBytes, err := json.Marshal(resp)
+	if err != nil {
+		bodyBytes = []byte(`{"status_code":500,"data":"internal marshal error"}`)
 	}
+
+	headers := model.DefaultSecurityHeaders.ToMap()
+	headers["Content-Type"] = "application/json"
+
 	return map[string]any{
 		"statusCode": statusCode,
-		"headers": map[string]string{
-			"Content-Type": "application/json",
-		},
-		"body": bodyStr,
+		"headers":    headers,
+		"body":       string(bodyBytes),
 	}
 }
