@@ -17,14 +17,16 @@ import (
 // verified caller identity. Create one via [Initialize] and retrieve it
 // with [GetAccount].
 type Account struct {
-	region    string
-	keyID     string
-	keySecret string
-	endpoint  string
-	identity  CallerIdentity // verified caller identity from STS
-	ready     bool           // true after successful Init()
-	mu        sync.RWMutex   // protects all fields
-	initErr   error          // captured error from the Init process
+	region             string
+	keyID              string
+	keySecret          string
+	endpoint           string
+	tablestoreInstance string
+	tablestoreTable    string
+	identity           CallerIdentity // verified caller identity from STS
+	ready              bool           // true after successful Init()
+	mu                 sync.RWMutex   // protects all fields
+	initErr            error          // captured error from the Init process
 }
 
 // CallerIdentity holds the verified caller information returned by the
@@ -61,6 +63,8 @@ func Initialize() error {
 	account.keyID = authKeys.AccessKeyID
 	account.keySecret = authKeys.SecretAccessKey
 	account.endpoint = authKeys.Endpoint
+	account.tablestoreInstance = authKeys.TableStoreInstance
+	account.tablestoreTable = authKeys.TableStoreTable
 
 	// Verify credentials by calling STS GetCallerIdentity.
 	stsClient, err := aliyun_sts.NewClientWithAccessKey(
@@ -166,6 +170,22 @@ func (a *Account) Identity() CallerIdentity {
 		panic("aliyun: Account not initialized")
 	}
 	return a.identity
+}
+
+// TableStoreInstance returns the TableStore instance name configured for
+// this account.
+func (a *Account) TableStoreInstance() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.tablestoreInstance
+}
+
+// TableStoreTable returns the TableStore table name configured for this
+// account.
+func (a *Account) TableStoreTable() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.tablestoreTable
 }
 
 // AliyunAuthorisation is reserved for future RAM / STS authorisation

@@ -26,7 +26,7 @@ func Registration(user model.User, ip, ua string) (model.JwtResponse, error) {
 		Gender:   user.Gender,
 		Locale:   user.Locale,
 	}
-	_ = userCredential // reserved for persistence layer integration
+	_ = userCredential
 
 	if model.PrivateKey == nil {
 		return model.JwtResponse{}, errors.New("signing key not loaded")

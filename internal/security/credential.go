@@ -18,6 +18,7 @@ func AWSCredentials() (model.AWSAuthorisationKeys, error) {
 		SecretAccessKey: toString(config.GetValue("aws.access_key_secret")),
 		Region:          toString(config.GetValue("aws.region")),
 		Bucket:          toString(config.GetValue("aws.bucket")),
+		DynamoDBTable:   toString(config.GetValue("aws.dynamodb_table")),
 	}
 
 	if creds.AccessKeyID == "" {
@@ -34,11 +35,13 @@ func AWSCredentials() (model.AWSAuthorisationKeys, error) {
 
 func AliyunCredentials() (model.AliyunAuthorisationKeys, error) {
 	creds := model.AliyunAuthorisationKeys{
-		AccessKeyID:     toString(config.GetValue("aliyun.access_key_id")),
-		SecretAccessKey: toString(config.GetValue("aliyun.access_key_secret")),
-		Region:          toString(config.GetValue("aliyun.region")),
-		Bucket:          toString(config.GetValue("aliyun.bucket")),
-		Endpoint:        toString(config.GetValue("aliyun.endpoint")),
+		AccessKeyID:       toString(config.GetValue("aliyun.access_key_id")),
+		SecretAccessKey:   toString(config.GetValue("aliyun.access_key_secret")),
+		Region:            toString(config.GetValue("aliyun.region")),
+		Bucket:            toString(config.GetValue("aliyun.bucket")),
+		Endpoint:          toString(config.GetValue("aliyun.endpoint")),
+		TableStoreInstance: toString(config.GetValue("aliyun.tablestore_instance")),
+		TableStoreTable:   toString(config.GetValue("aliyun.tablestore_table")),
 	}
 
 	if creds.AccessKeyID == "" {
