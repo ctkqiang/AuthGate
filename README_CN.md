@@ -36,6 +36,8 @@ Go 1.26 · RS256 JWT · DynamoDB / TableStore · S3 / OSS · API Gateway / FC HT
               └────────────────────────────────┘
 ```
 
+![架构 — 端口适配器](out/docs/architecture_ZH/architecture.png)
+
 ### 启动流程
 
 ```
@@ -52,6 +54,8 @@ main()
   ├─ handler.LookupUserFunc  = ...          注入查询回调
   └─ service.StartLocalServer()             Local 模式 → net/http :8000
 ```
+
+![启动流程](out/docs/startup_ZH/startup.png)
 
 ### 环境检测
 
@@ -78,6 +82,8 @@ Client → API Gateway → Lambda Invoke
                                   │
 Client ← HTTP 200 ← API Gateway  ◄
 ```
+
+![请求生命周期](out/docs/request_lifecycle_ZH/request_lifecycle.png)
 
 ## 项目结构
 
@@ -144,6 +150,8 @@ AuthGate/
     └── utilities/                 工具
         └── logger.go              结构化日志, CloudWatch 兼容, ANSI 彩色输出
 ```
+
+![包依赖关系](out/docs/packages_ZH/packages.png)
 
 ## 快速开始
 
@@ -410,6 +418,8 @@ go build -o authgate main.go
 ### Postman 测试集合
 
 导入 `postman_collection.json`，包含所有 7 个端点的请求模板和测试脚本。
+
+![部署拓扑](out/docs/deployment_ZH/deployment.png)
 
 ## JWT 安全设计
 

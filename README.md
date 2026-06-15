@@ -36,6 +36,8 @@ Go 1.26 · RS256 JWT · DynamoDB / TableStore · S3 / OSS · API Gateway / FC HT
               └────────────────────────────────┘
 ```
 
+![Architecture — Ports & Adapters](out/docs/architecture_EN/architecture.png)
+
 ### Startup Flow
 
 ```
@@ -52,6 +54,8 @@ main()
   ├─ handler.LookupUserFunc  = ...         inject lookup callback
   └─ service.StartLocalServer()            Local mode → net/http :8000
 ```
+
+![Startup Sequence](out/docs/startup_EN/startup.png)
 
 ### Environment Detection
 
@@ -78,6 +82,8 @@ Client → API Gateway → Lambda Invoke
                                   │
 Client ← HTTP 200 ← API Gateway  ◄
 ```
+
+![Request Lifecycle](out/docs/request_lifecycle_EN/request_lifecycle.png)
 
 ## Project Structure
 
@@ -144,6 +150,8 @@ AuthGate/
     └── utilities/                utility
         └── logger.go             structured logging, CloudWatch-compatible, ANSI color
 ```
+
+![Package Dependencies](out/docs/packages_EN/packages.png)
 
 ## Quick Start
 
@@ -410,6 +418,8 @@ go build -o authgate main.go
 ### Postman Collection
 
 Import `postman_collection.json` — includes request templates and test scripts for all 7 endpoints.
+
+![Deployment Topology](out/docs/deployment_EN/deployment.png)
 
 ## JWT Security
 

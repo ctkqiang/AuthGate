@@ -129,6 +129,7 @@ func AuthLogout(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		AccessToken string `json:"access_token"`
 	}
+
 	json.NewDecoder(r.Body).Decode(&body)
 
 	utilities.LogProgress("handler", "AuthLogout",
