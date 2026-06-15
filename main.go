@@ -42,10 +42,11 @@ func main() {
 		}
 	}
 
-	// Wire the persistence callback into the handler so that
-	// AuthRegister can persist users to the configured database
-	// backend without creating an import cycle.
+	// Wire the persistence callbacks into the handler so that
+	// AuthRegister / AuthLogin can read and write users to the
+	// configured database backend without creating an import cycle.
 	handler.PersistUserFunc = persistence.PersistUser
+	handler.LookupUserFunc = persistence.LookupUser
 
 	// If a cloud runtime took over, we never reach this point.
 	// Otherwise, start a single local HTTP server on Addr.

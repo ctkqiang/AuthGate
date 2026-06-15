@@ -121,21 +121,15 @@ func HandleAPIGatewayEvent(ctx context.Context, event model.APIGatewayEvent) (ma
 	)
 
 	w := newResponseRecorder()
-	matched := false
-	for _, entry := range service.Routes {
-		if event.Path == entry.Path {
-			entry.Handler(w, req)
-			matched = true
-			break
-		}
-	}
-
-	if !matched {
+	handler := service.MatchRoute(event.Path)
+	if handler == nil {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(model.Response{
 			StatusCode: model.StatusCode(http.StatusNotFound),
 			Data:       map[string]string{"error": "not found"},
 		})
+	} else {
+		handler(w, req)
 	}
 
 	// Attempt to unmarshal the route handler's output as model.Response.

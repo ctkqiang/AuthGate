@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	aliyun_fc "github.com/aliyun/fc-runtime-go-sdk/fc"
 )
@@ -105,9 +106,16 @@ func fcHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	utilities.LogProgress("fc", r.Method+" "+r.URL.Path, fmt.Sprintf("source=%s", srcIP))
 
 	for _, entry := range service.Routes {
-		if r.URL.Path == entry.Path {
-			entry.Handler(w, r)
-			return
+		if entry.Prefix {
+			if strings.HasPrefix(r.URL.Path, entry.Path) {
+				entry.Handler(w, r)
+				return
+			}
+		} else {
+			if r.URL.Path == entry.Path {
+				entry.Handler(w, r)
+				return
+			}
 		}
 	}
 

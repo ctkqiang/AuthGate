@@ -14,13 +14,18 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
 // RouteEntry pairs a URL path with its handler function.  The [Routes]
 // slice is the single source of truth for all runtime adapters.
+//
+// When Prefix is true the path is matched as a prefix (for parameterised
+// routes like /auth/provider/google).
 type RouteEntry struct {
 	Path    string
+	Prefix  bool
 	Handler http.HandlerFunc
 }
 
@@ -31,6 +36,27 @@ var Routes = []RouteEntry{
 	{Path: config.IndexPath, Handler: handler.Index},
 	{Path: config.HealthPath, Handler: handler.Health},
 	{Path: config.AuthRegister, Handler: handler.AuthRegister},
+	{Path: config.AuthLogin, Handler: handler.AuthLogin},
+	{Path: config.AuthLogout, Handler: handler.AuthLogout},
+	{Path: config.AuthRefresh, Handler: handler.AuthRefresh},
+	{Path: "/auth/provider/", Prefix: true, Handler: handler.AuthWithProvider},
+}
+
+// MatchRoute finds the first route whose path matches the request URL.
+// Routes with Prefix=true use prefix matching; all others use exact match.
+func MatchRoute(path string) http.HandlerFunc {
+	for _, entry := range Routes {
+		if entry.Prefix {
+			if strings.HasPrefix(path, entry.Path) {
+				return entry.Handler
+			}
+		} else {
+			if path == entry.Path {
+				return entry.Handler
+			}
+		}
+	}
+	return nil
 }
 
 // IsLocalMode reports whether none of the supported cloud runtimes
@@ -54,7 +80,11 @@ func StartLocalServer() {
 
 	mux := http.NewServeMux()
 	for _, entry := range Routes {
-		mux.HandleFunc(entry.Path, logRequest(entry.Handler))
+		if entry.Prefix {
+			mux.HandleFunc(entry.Path, logRequest(entry.Handler))
+		} else {
+			mux.HandleFunc(entry.Path, logRequest(entry.Handler))
+		}
 	}
 
 	srv := &http.Server{Addr: config.Addr, Handler: mux}

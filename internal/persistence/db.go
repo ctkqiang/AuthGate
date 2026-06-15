@@ -17,6 +17,33 @@ import (
 	"time"
 )
 
+// LookupUser detects the active database backend and retrieves a user
+// record by username. Returns nil if the user does not exist or no
+// backend is configured.
+func LookupUser(ctx context.Context, username string) (map[string]interface{}, error) {
+	awsCfg, _ := security.AWSCredentials()
+	aliCfg, _ := security.AliyunCredentials()
+
+	key := map[string]interface{}{"username": username}
+
+	switch {
+	case awsCfg.AccessKeyID != "" && awsCfg.Region != "" && awsCfg.DynamoDBTable != "":
+		utilities.LogProgress("persistence", "LookupUser",
+			fmt.Sprintf("provider=aws table=%s username=%s", awsCfg.DynamoDBTable, username))
+		return aws.GetById(ctx, awsCfg.DynamoDBTable, key)
+
+	case aliCfg.AccessKeyID != "" && aliCfg.Region != "" && aliCfg.TableStoreTable != "":
+		utilities.LogProgress("persistence", "LookupUser",
+			fmt.Sprintf("provider=aliyun table=%s username=%s", aliCfg.TableStoreTable, username))
+		return aliyun.GetById(ctx, aliCfg.TableStoreTable, key)
+
+	default:
+		utilities.LogProgress("persistence", "LookupUser",
+			"no database backend configured")
+		return nil, nil
+	}
+}
+
 // PersistUser detects the active database backend (AWS DynamoDB or
 // Alibaba Cloud TableStore) and inserts the user record. If no backend
 // is configured the function succeeds silently.
