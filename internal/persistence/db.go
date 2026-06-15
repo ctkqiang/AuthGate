@@ -1,0 +1,56 @@
+// Package persistence provides the user-persistence layer that bridges
+// the handler package to cloud database backends (DynamoDB / TableStore)
+// without creating import cycles.
+//
+// The entry point [PersistUser] is wired into the handler via
+// handler.PersistUserFunc in main.go.
+package persistence
+
+import (
+	"authgate/internal/aliyun"
+	"authgate/internal/aws"
+	"authgate/internal/model"
+	"authgate/internal/security"
+	"authgate/internal/utilities"
+	"context"
+	"fmt"
+	"time"
+)
+
+// PersistUser detects the active database backend (AWS DynamoDB or
+// Alibaba Cloud TableStore) and inserts the user record. If no backend
+// is configured the function succeeds silently.
+//
+// AWS has priority when both providers are configured.
+func PersistUser(ctx context.Context, user model.User, jwtResp model.JwtResponse) error {
+	awsCfg, _ := security.AWSCredentials()
+	aliCfg, _ := security.AliyunCredentials()
+
+	item := map[string]interface{}{
+		"username":      user.Username,
+		"email":         user.Email,
+		"password":      user.Password,
+		"access_token":  jwtResp.AccessToken,
+		"refresh_token": jwtResp.RefreshToken,
+		"created_at":    time.Now().UTC().Format(time.RFC3339),
+	}
+
+	switch {
+	case awsCfg.AccessKeyID != "" && awsCfg.Region != "" && awsCfg.DynamoDBTable != "":
+		utilities.LogProgress("persistence", "PersistUser",
+			fmt.Sprintf("provider=aws table=%s", awsCfg.DynamoDBTable))
+		_, err := aws.Insert(ctx, awsCfg.DynamoDBTable, item)
+		return err
+
+	case aliCfg.AccessKeyID != "" && aliCfg.Region != "" && aliCfg.TableStoreTable != "":
+		utilities.LogProgress("persistence", "PersistUser",
+			fmt.Sprintf("provider=aliyun table=%s", aliCfg.TableStoreTable))
+		_, err := aliyun.Insert(ctx, aliCfg.TableStoreTable, item)
+		return err
+
+	default:
+		utilities.LogProgress("persistence", "PersistUser",
+			"no database backend configured — user not persisted")
+		return nil
+	}
+}

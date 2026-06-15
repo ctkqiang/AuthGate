@@ -4,7 +4,9 @@ import (
 	"authgate/internal/aliyun"
 	"authgate/internal/aws"
 	"authgate/internal/config"
+	"authgate/internal/handler"
 	"authgate/internal/model"
+	"authgate/internal/persistence"
 	"authgate/internal/service"
 	"authgate/internal/utilities"
 )
@@ -39,6 +41,11 @@ func main() {
 			panic("Please provide at least one cloud provider")
 		}
 	}
+
+	// Wire the persistence callback into the handler so that
+	// AuthRegister can persist users to the configured database
+	// backend without creating an import cycle.
+	handler.PersistUserFunc = persistence.PersistUser
 
 	// If a cloud runtime took over, we never reach this point.
 	// Otherwise, start a single local HTTP server on Addr.
