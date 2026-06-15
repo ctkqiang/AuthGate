@@ -1,3 +1,5 @@
+package aws
+
 // Package aws (dynamodb.go) provides DynamoDB database operations.
 //
 // All functions require a prior call to [Initialize] so that the
@@ -9,7 +11,6 @@
 //   - Insert  — put a single item into a table
 //   - Delete  — remove an item by its primary key
 //   - Update  — apply a partial update to an existing item
-package aws
 
 import (
 	"authgate/internal/utilities"

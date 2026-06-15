@@ -15,6 +15,7 @@ package aws
 
 import (
 	"authgate/internal/model"
+	"authgate/internal/service"
 	"authgate/internal/utilities"
 	"bytes"
 	"context"
@@ -113,7 +114,11 @@ func HandleAPIGatewayEvent(ctx context.Context, event model.APIGatewayEvent) (ma
 	if srcIP == "" {
 		srcIP = req.RemoteAddr
 	}
-	utilities.LogProgress("lambda", req.Method+" "+req.URL.Path, fmt.Sprintf("source=%s", srcIP))
+	utilities.LogProgress(
+		"lambda",
+		req.Method+" "+req.URL.Path,
+		fmt.Sprintf("source=%s", srcIP),
+	)
 
 	w := newResponseRecorder()
 	matched := false
