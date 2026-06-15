@@ -1,0 +1,63 @@
+@startuml deployment
+!theme plain
+title AuthGate — Deployment Topology
+
+skinparam rectangleBorderColor #555555
+skinparam nodeBorderColor #555555
+
+' ── Cloud Subnets ──
+rectangle "AWS Cloud\n(us-east-1)" as AWSCloud #FF990022 {
+    node "API Gateway\nREST / HTTP API" as AWSAPIGW
+    node "Lambda\nauthgate" as AWSLambda
+    node "DynamoDB\nUsers Table" as AWSDDB
+    node "S3\nauthgate-keys" as AWSS3
+    node "CloudWatch\nLogs" as AWSLogs
+
+    AWSAPIGW --> AWSLambda : Lambda Proxy\nIntegration
+    AWSLambda --> AWSDDB : GetItem / PutItem\nIAM Role
+    AWSLambda --> AWSS3 : GetObject / PutObject\n.pem keys
+    AWSLambda --> AWSLogs : structured logs
+}
+
+rectangle "Alibaba Cloud\n(cn-hangzhou)" as AliCloud #FF6A0022 {
+    node "FC HTTP Trigger" as ALIFC
+    node "函数计算\nauthgate" as ALIFunc
+    node "TableStore\nUsers Table" as ALITS
+    node "OSS\nauthgate-keys" as ALIOSS
+    node "CloudMonitor\n日志服务" as ALILogs
+
+    ALIFC --> ALIFunc : HTTP Trigger\n(anonymous)
+    ALIFunc --> ALITS : GetRow / PutRow\nRAM Role
+    ALIFunc --> ALIOSS : GetObject / PutObject\n.pem keys
+    ALIFunc --> ALILogs : structured logs
+}
+
+' ── Local ──
+rectangle "Local Development\n(macOS)" as Local #EEEEEE {
+    node "authgate\nnet/http :8000" as LocalServer
+    node "RSA-2048\nin-memory" as LocalKeys
+    node "Terminal\nANSI logs" as LocalLogs
+
+    LocalServer --> LocalKeys : auto-generate
+    LocalServer --> LocalLogs : colored output
+}
+
+' ── Client ──
+actor "Client" as Client
+Client --> AWSAPIGW : HTTPS\n/api/*
+Client --> ALIFC : HTTPS\n/api/*
+Client --> LocalServer : HTTP\nlocalhost:8000
+
+' ── Developer ──
+actor "Developer" as Dev
+Dev --> AWSLambda : aws lambda update-function-code
+Dev --> ALIFunc : zip upload
+Dev --> LocalServer : go run main.go
+
+' ── CI/CD ──
+rectangle "Git Repository" as Git #333333 {
+    node "GitCode\n/ GitHub" as Repo
+}
+Dev --> Repo : git push
+
+@enduml

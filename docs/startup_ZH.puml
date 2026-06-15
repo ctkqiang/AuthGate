@@ -1,0 +1,101 @@
+@startuml startup
+!theme plain
+title AuthGate — 启动流程
+
+participant main.go
+participant "config\n(TOML)" as Config
+participant "authentication\n(EnsureKeys)" as Auth
+participant "security\n(KeyGen)" as KeyGen
+participant "aws\n(Account)" as AWS
+participant "aliyun\n(Account)" as Aliyun
+participant "aws\n(Lambda)" as LambdaRT
+participant "aliyun\n(FC)" as FCRT
+participant "service\n(HTTP Server)" as Server
+
+== 阶段 0: 加载配置 ==
+main.go -> Config : LoadConfigurationFile("config.toml")
+Config --> main.go : config map 已加载
+
+main.go -> main.go : SupportedProvider()\n读取 [supported_providers]
+
+== 阶段 1: SDK 初始化 ==
+main.go -> AWS : Initialize(ctx)\nSTS GetCallerIdentity
+note right of AWS : 验证 IAM 凭证\n填充 Account 单例
+AWS --> main.go : OK (云端) / 仅记日志 (本地)
+
+main.go -> Aliyun : Initialize()\nRAM GetCallerIdentity
+note right of Aliyun : 验证 RAM 凭证\n填充 Account 单例
+Aliyun --> main.go : OK (云端) / 仅记日志 (本地)
+
+== 阶段 2: 密钥加载 ==
+main.go -> Auth : EnsureKeys()
+
+alt S3/OSS 已配置 && SDK Ready
+    Auth -> AWS : GetObject(bucket, "private.pem")
+    AWS --> Auth : PEM 字节
+
+    alt 密钥存在
+        Auth -> Auth : ParsePrivateKeyPEM()
+        Auth -> Auth : ParsePublicKeyPEM()
+        note right of Auth : 从云存储加载完成
+    else 密钥不存在
+        Auth -> KeyGen : GenerateRSAKeyPair()
+        KeyGen --> Auth : private.pem + public.pem
+
+        alt isCloudRuntime()
+            Auth -> AWS : PutObject(bucket, "private.pem")
+            Auth -> AWS : PutObject(bucket, "public.pem")
+            note right of Auth : 已上传，下次启动直接使用
+        else 本地模式
+            note right of Auth : 仅内存，不碰云存储
+        end
+
+        Auth -> Auth : ParsePrivateKeyPEM()
+        Auth -> Auth : ParsePublicKeyPEM()
+    end
+else 无后端或 SDK 未就绪
+    Auth -> KeyGen : GenerateRSAKeyPair()
+    KeyGen --> Auth : private.pem + public.pem
+    note right of Auth : 仅内存 — 本地开发模式
+end
+
+Auth -> model : PrivateKey = ..., PublicKey = ...
+Auth --> main.go : 密钥就绪
+
+== 阶段 3: 运行时注册 ==
+main.go -> LambdaRT : InitializeLambdaService()
+
+alt 检测到 AWS Lambda 运行时\n(_LAMBDA_SERVER_PORT + AWS_LAMBDA_RUNTIME_API)
+    LambdaRT -> LambdaRT : lambda.Start(HandleAPIGatewayEvent)
+    note over LambdaRT : 永久阻塞\n不再启动本地 server
+else 本地模式
+    LambdaRT --> main.go : 立即返回
+end
+
+main.go -> FCRT : InitializeFCService()
+
+alt 检测到阿里云 FC 运行时\n(FC_FUNCTION_NAME)
+    FCRT -> FCRT : fc.StartHttp(fcHTTPHandler)
+    note over FCRT : 永久阻塞\n不再启动本地 server
+else 本地模式
+    FCRT --> main.go : 立即返回
+end
+
+== 阶段 4: 回调注入 ==
+main.go -> main.go : handler.PersistUserFunc = persistence.PersistUser
+main.go -> main.go : handler.LookupUserFunc = persistence.LookupUser
+
+== 阶段 5: 本地 Server ==
+alt IsLocalMode() == true
+    main.go -> Server : StartLocalServer()
+    Server -> Server : mux := http.NewServeMux()
+    loop 遍历所有 Route
+        Server -> Server : mux.HandleFunc(path, handler)
+    end
+    Server -> Server : srv.ListenAndServe() 监听 0.0.0.0:8000
+    note over Server : SIGINT/SIGTERM 优雅关闭
+else 云端运行时已接管
+    main.go -> main.go : return (不会执行到这里)
+end
+
+@enduml

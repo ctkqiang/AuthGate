@@ -1,0 +1,133 @@
+@startuml packages
+!theme plain
+title AuthGate — 包依赖关系
+
+skinparam packageBorderColor #555555
+skinparam arrowColor #333333
+
+package "main.go" as main #LightPink {
+    [SupportedProvider]
+}
+
+package "config" as config #AliceBlue {
+    [get_configuration.go]
+    [get_server.go]
+}
+
+package "authentication" as auth #Wheat {
+    [get_keys.go]
+}
+
+package "security" as security #Wheat {
+    [keygen.go]
+    [credential.go]
+    [signature.go]
+}
+
+package "handler" as handler #LightGreen {
+    [handler.go]
+    [register.go]
+    [login.go]
+    [refresh.go]
+    [provider.go]
+}
+
+package "service" as service #LightSkyBlue {
+    [server.go]
+}
+
+package "persistence" as persistence #LightCoral {
+    [db.go]
+}
+
+package "model" as model #Lavender {
+    [user.go]
+    [jwt.go]
+    [response.go]
+    [request.go]
+    [provider.go]
+    [auth_provider.go]
+    [credentials.go]
+    [keys.go]
+    [handler.go]
+}
+
+package "aws" as aws #LightYellow {
+    [authorisation.go]
+    [lambda.go]
+    [dynamodb.go]
+    [s3.go]
+    [cloudwatch.go]
+}
+
+package "aliyun" as aliyun #LightYellow {
+    [authorisation.go]
+    [functions.go]
+    [tablestore.go]
+    [oss.go]
+    [cloudmonitor.go]
+}
+
+package "utilities" as util #Gainsboro {
+    [logger.go]
+}
+
+' ── 依赖关系 ──
+main --> config
+main --> auth
+main --> handler
+main --> persistence
+main --> service
+main --> aws
+main --> aliyun
+main --> model
+main --> util
+
+handler --> model
+handler --> util
+handler --> security
+
+service --> config
+service --> handler
+service --> util
+
+auth --> aws
+auth --> aliyun
+auth --> model
+auth --> security
+auth --> util
+
+persistence --> aws
+persistence --> aliyun
+persistence --> model
+persistence --> security
+persistence --> util
+
+aws --> model
+aws --> security
+aws --> util
+
+aliyun --> model
+aliyun --> security
+aliyun --> util
+
+security --> config
+security --> model
+
+config --> util
+
+' ── 关键点 ──
+note right of model
+  model/ 对 internal 其他包
+  零依赖。是共享内核。
+end note
+
+note right of handler
+  handler/ 通过函数指针
+  (PersistUserFunc / LookupUserFunc)
+  依赖持久化层，不直接 import
+  aws/aliyun/persistence。
+  避免循环依赖。
+end note
+
+@enduml

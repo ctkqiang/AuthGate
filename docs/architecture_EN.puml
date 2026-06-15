@@ -1,0 +1,103 @@
+@startuml architecture
+!theme plain
+title AuthGate — Ports & Adapters Architecture
+
+skinparam componentStyle rectangle
+skinparam backgroundColor #FEFEFE
+skinparam packageBorderColor #333333
+skinparam componentBorderColor #555555
+
+' ── External ──
+actor Client
+actor "API Gateway" as APIGW
+actor "FC HTTP Trigger" as FCHTTP
+
+' ── Port ──
+package "Port (service.Routes)" as Port #LightBlue {
+    [GET /] as R1
+    [GET /health] as R2
+    [POST /auth/register] as R3
+    [POST /auth/login] as R4
+    [POST /auth/logout] as R5
+    [POST /auth/refresh] as R6
+    [POST /auth/provider/{name}] as R7
+}
+
+' ── Adapters ──
+package "AWS Adapter (aws/)" as AWS #LightYellow {
+    [lambda.go\nHandleAPIGatewayEvent] as LambdaHandler
+    [dynamodb.go\nInsert / GetById] as DynamoDB
+    [s3.go\nGetObject / PutObject] as S3
+    [authorisation.go\nAccount / STS] as AWSAccount
+}
+
+package "Alibaba Cloud Adapter (aliyun/)" as Aliyun #LightYellow {
+    [functions.go\nfcHTTPHandler] as FCHandler
+    [tablestore.go\nInsert / GetById] as TableStore
+    [oss.go\nGetObject / PutObject] as OSS
+    [authorisation.go\nAccount / RAM] as ALIAccount
+}
+
+' ── Business Logic ──
+package "Handler (handler/)" as Handler #LightGreen {
+    [handler.go\nAuthRegister / AuthLogin\nAuthRefresh / AuthLogout\nAuthWithProvider] as Handlers
+    [register.go\nRegistration] as Register
+    [login.go\nLogin] as Login
+    [refresh.go\nRefresh / Validate] as Refresh
+    [provider.go\nAuthenticateWithProvider] as Provider
+}
+
+' ── Domain ──
+package "Model (model/)" as Model #Lavender {
+    [User / JWT] as Models
+    [Response / Request] as Messages
+    [CloudPlatform / AuthProvider] as Enums
+}
+
+' ── Infrastructure ──
+package "Persistence (persistence/)" as Persistence #LightCoral {
+    [LookupUser / PersistUser] as Persist
+}
+
+package "Security (security/)" as Security #Wheat {
+    [RSA Key Generation] as KeyGen
+    [Credentials / PKCE] as Creds
+}
+
+package "Authentication (authentication/)" as Auth #Wheat {
+    [EnsureKeys] as Keys
+}
+
+' ── Connections ──
+Client --> APIGW : HTTPS
+Client --> FCHTTP : HTTPS
+APIGW --> LambdaHandler : Lambda Invoke
+FCHTTP --> FCHandler : HTTP Trigger
+
+LambdaHandler --> Port : MatchRoute()
+FCHandler --> Port : MatchRoute()
+Port --> Handlers
+
+Handlers --> Register
+Handlers --> Login
+Handlers --> Refresh
+Handlers --> Provider
+
+Register --> Models
+Login --> Persist
+Refresh --> Models
+Provider --> Models
+
+Persist --> DynamoDB : AWS
+Persist --> TableStore : Aliyun
+
+Keys --> S3 : download keys
+Keys --> OSS : download keys
+Keys --> KeyGen : generate if missing
+
+AWSAccount --> S3 : creds
+AWSAccount --> DynamoDB : creds
+ALIAccount --> OSS : creds
+ALIAccount --> TableStore : creds
+
+@enduml

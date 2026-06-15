@@ -93,9 +93,10 @@ func AuthRegister(w http.ResponseWriter, r *http.Request) {
 
 // AuthLogin handles POST /auth/login.
 func AuthLogin(w http.ResponseWriter, r *http.Request) {
+	var req model.EmailPasswordAuthRequest
+
 	w.Header().Set("Content-Type", "application/json")
 
-	var req model.EmailPasswordAuthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(model.Response{

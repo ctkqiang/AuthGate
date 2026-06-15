@@ -1,0 +1,101 @@
+@startuml startup
+!theme plain
+title AuthGate — Startup Sequence
+
+participant main.go
+participant "config\n(TOML)" as Config
+participant "authentication\n(EnsureKeys)" as Auth
+participant "security\n(KeyGen)" as KeyGen
+participant "aws\n(Account)" as AWS
+participant "aliyun\n(Account)" as Aliyun
+participant "aws\n(Lambda)" as LambdaRT
+participant "aliyun\n(FC)" as FCRT
+participant "service\n(HTTP Server)" as Server
+
+== Phase 0: Config ==
+main.go -> Config : LoadConfigurationFile("config.toml")
+Config --> main.go : config map loaded
+
+main.go -> main.go : SupportedProvider()\nread [supported_providers]
+
+== Phase 1: SDK Init ==
+main.go -> AWS : Initialize(ctx)\nSTS GetCallerIdentity
+note right of AWS : verifies IAM credentials\npopulates Account singleton
+AWS --> main.go : OK (in cloud) / error logged (local)
+
+main.go -> Aliyun : Initialize()\nRAM GetCallerIdentity
+note right of Aliyun : verifies RAM credentials\npopulates Account singleton
+Aliyun --> main.go : OK (in cloud) / error logged (local)
+
+== Phase 2: Key Loading ==
+main.go -> Auth : EnsureKeys()
+
+alt S3/OSS configured && SDK Ready
+    Auth -> AWS : GetObject(bucket, "private.pem")
+    AWS --> Auth : PEM bytes
+
+    alt keys found
+        Auth -> Auth : ParsePrivateKeyPEM()
+        Auth -> Auth : ParsePublicKeyPEM()
+        note right of Auth : keys loaded from cloud storage
+    else keys not found
+        Auth -> KeyGen : GenerateRSAKeyPair()
+        KeyGen --> Auth : private.pem + public.pem
+
+        alt isCloudRuntime()
+            Auth -> AWS : PutObject(bucket, "private.pem")
+            Auth -> AWS : PutObject(bucket, "public.pem")
+            note right of Auth : uploaded for next boot
+        else local mode
+            note right of Auth : kept in memory only
+        end
+
+        Auth -> Auth : ParsePrivateKeyPEM()
+        Auth -> Auth : ParsePublicKeyPEM()
+    end
+else no backend or SDK not ready
+    Auth -> KeyGen : GenerateRSAKeyPair()
+    KeyGen --> Auth : private.pem + public.pem
+    note right of Auth : in-memory only — local dev mode
+end
+
+Auth -> model : PrivateKey = ..., PublicKey = ...
+Auth --> main.go : keys ready
+
+== Phase 3: Runtime Registration ==
+main.go -> LambdaRT : InitializeLambdaService()
+
+alt AWS Lambda runtime detected\n(_LAMBDA_SERVER_PORT + AWS_LAMBDA_RUNTIME_API)
+    LambdaRT -> LambdaRT : lambda.Start(HandleAPIGatewayEvent)
+    note over LambdaRT : BLOCKS FOREVER\nserver never starts
+else local mode
+    LambdaRT --> main.go : returns immediately
+end
+
+main.go -> FCRT : InitializeFCService()
+
+alt Aliyun FC runtime detected\n(FC_FUNCTION_NAME)
+    FCRT -> FCRT : fc.StartHttp(fcHTTPHandler)
+    note over FCRT : BLOCKS FOREVER\nserver never starts
+else local mode
+    FCRT --> main.go : returns immediately
+end
+
+== Phase 4: Callback Injection ==
+main.go -> main.go : handler.PersistUserFunc = persistence.PersistUser
+main.go -> main.go : handler.LookupUserFunc = persistence.LookupUser
+
+== Phase 5: Local Server ==
+alt IsLocalMode() == true
+    main.go -> Server : StartLocalServer()
+    Server -> Server : mux := http.NewServeMux()
+    loop for each Route
+        Server -> Server : mux.HandleFunc(path, handler)
+    end
+    Server -> Server : srv.ListenAndServe() on 0.0.0.0:8000
+    note over Server : graceful shutdown on SIGINT/SIGTERM
+else cloud runtime took over
+    main.go -> main.go : return (never reached)
+end
+
+@enduml

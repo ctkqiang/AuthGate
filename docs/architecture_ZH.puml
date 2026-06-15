@@ -1,0 +1,104 @@
+@startuml architecture
+!theme plain
+title AuthGate — 端口适配器架构
+
+skinparam componentStyle rectangle
+skinparam backgroundColor #FEFEFE
+skinparam packageBorderColor #333333
+skinparam componentBorderColor #555555
+
+' ── 外部 ──
+actor 客户端
+
+actor "API Gateway" as APIGW
+actor "FC HTTP 触发器" as FCHTTP
+
+' ── 端口 ──
+package "端口 (service.Routes)" as Port #LightBlue {
+    [GET /] as R1
+    [GET /health] as R2
+    [POST /auth/register] as R3
+    [POST /auth/login] as R4
+    [POST /auth/logout] as R5
+    [POST /auth/refresh] as R6
+    [POST /auth/provider/{name}] as R7
+}
+
+' ── 适配器 ──
+package "AWS 适配器 (aws/)" as AWS #LightYellow {
+    [lambda.go\nHandleAPIGatewayEvent] as LambdaHandler
+    [dynamodb.go\nInsert / GetById] as DynamoDB
+    [s3.go\nGetObject / PutObject] as S3
+    [authorisation.go\nAccount / STS] as AWSAccount
+}
+
+package "阿里云适配器 (aliyun/)" as Aliyun #LightYellow {
+    [functions.go\nfcHTTPHandler] as FCHandler
+    [tablestore.go\nInsert / GetById] as TableStore
+    [oss.go\nGetObject / PutObject] as OSS
+    [authorisation.go\nAccount / RAM] as ALIAccount
+}
+
+' ── 业务逻辑 ──
+package "Handler (handler/)" as Handler #LightGreen {
+    [handler.go\nAuthRegister / AuthLogin\nAuthRefresh / AuthLogout\nAuthWithProvider] as Handlers
+    [register.go\nRegistration] as Register
+    [login.go\nLogin] as Login
+    [refresh.go\nRefresh / Validate] as Refresh
+    [provider.go\nAuthenticateWithProvider] as Provider
+}
+
+' ── 领域模型 ──
+package "Model (model/)" as Model #Lavender {
+    [User / JWT] as Models
+    [Response / Request] as Messages
+    [CloudPlatform / AuthProvider] as Enums
+}
+
+' ── 基础设施 ──
+package "持久化 (persistence/)" as Persistence #LightCoral {
+    [LookupUser / PersistUser] as Persist
+}
+
+package "安全 (security/)" as Security #Wheat {
+    [RSA 密钥生成] as KeyGen
+    [凭证 / PKCE] as Creds
+}
+
+package "认证 (authentication/)" as Auth #Wheat {
+    [EnsureKeys] as Keys
+}
+
+' ── 连接 ──
+客户端 --> APIGW : HTTPS
+客户端 --> FCHTTP : HTTPS
+APIGW --> LambdaHandler : Lambda 调用
+FCHTTP --> FCHandler : HTTP 触发
+
+LambdaHandler --> Port : MatchRoute()
+FCHandler --> Port : MatchRoute()
+Port --> Handlers
+
+Handlers --> Register
+Handlers --> Login
+Handlers --> Refresh
+Handlers --> Provider
+
+Register --> Models
+Login --> Persist
+Refresh --> Models
+Provider --> Models
+
+Persist --> DynamoDB : AWS
+Persist --> TableStore : 阿里云
+
+Keys --> S3 : 下载密钥
+Keys --> OSS : 下载密钥
+Keys --> KeyGen : 未找到则生成
+
+AWSAccount --> S3 : 凭证
+AWSAccount --> DynamoDB : 凭证
+ALIAccount --> OSS : 凭证
+ALIAccount --> TableStore : 凭证
+
+@enduml

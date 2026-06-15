@@ -1,0 +1,134 @@
+@startuml packages
+!theme plain
+title AuthGate — Package Dependencies
+
+skinparam packageBorderColor #555555
+skinparam arrowColor #333333
+
+package "main.go" as main #LightPink {
+    [SupportedProvider]
+}
+
+package "config" as config #AliceBlue {
+    [get_configuration.go]
+    [get_server.go]
+}
+
+package "authentication" as auth #Wheat {
+    [get_keys.go]
+}
+
+package "security" as security #Wheat {
+    [keygen.go]
+    [credential.go]
+    [signature.go]
+}
+
+package "handler" as handler #LightGreen {
+    [handler.go]
+    [register.go]
+    [login.go]
+    [refresh.go]
+    [provider.go]
+}
+
+package "service" as service #LightSkyBlue {
+    [server.go]
+}
+
+package "persistence" as persistence #LightCoral {
+    [db.go]
+}
+
+package "model" as model #Lavender {
+    [user.go]
+    [jwt.go]
+    [response.go]
+    [request.go]
+    [provider.go]
+    [auth_provider.go]
+    [credentials.go]
+    [keys.go]
+    [handler.go]
+}
+
+package "aws" as aws #LightYellow {
+    [authorisation.go]
+    [lambda.go]
+    [dynamodb.go]
+    [s3.go]
+    [cloudwatch.go]
+}
+
+package "aliyun" as aliyun #LightYellow {
+    [authorisation.go]
+    [functions.go]
+    [tablestore.go]
+    [oss.go]
+    [cloudmonitor.go]
+}
+
+package "utilities" as util #Gainsboro {
+    [logger.go]
+}
+
+' ── Dependencies ──
+main --> config
+main --> auth
+main --> handler
+main --> persistence
+main --> service
+main --> aws
+main --> aliyun
+main --> model
+main --> util
+
+handler --> model
+handler --> util
+handler --> security
+
+service --> config
+service --> handler
+service --> util
+
+auth --> aws
+auth --> aliyun
+auth --> model
+auth --> security
+auth --> util
+
+persistence --> aws
+persistence --> aliyun
+persistence --> model
+persistence --> security
+persistence --> util
+
+aws --> model
+aws --> security
+aws --> util
+
+aliyun --> model
+aliyun --> security
+aliyun --> util
+
+security --> config
+security --> model
+
+config --> util
+
+' ── Key: no cycles ──
+note right of model
+  model/ has ZERO imports
+  from other internal packages.
+  It is the shared kernel.
+end note
+
+note right of handler
+  handler/ depends on
+  PersistUserFunc / LookupUserFunc
+  (function pointers), NOT on
+  aws/aliyun/persistence directly.
+  Avoids import cycle.
+end note
+
+@enduml

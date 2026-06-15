@@ -1,0 +1,90 @@
+@startuml request_lifecycle
+!theme plain
+title AuthGate — Request Lifecycle (POST /auth/register)
+
+actor "Client" as Client
+participant "API Gateway" as APIGW
+participant "Lambda\nHandleAPIGatewayEvent" as Lambda
+participant "service\nMatchRoute" as Router
+participant "handler\nAuthRegister" as Handler
+participant "handler\nRegistration" as Register
+participant "model\nJWT" as JWT
+participant "persistence\nPersistUser" as Persist
+participant "DynamoDB\n/ TableStore" as DB
+
+== API Gateway → Lambda ==
+Client -> APIGW : POST /auth/register\n{"Username":"alice",...}
+APIGW -> Lambda : Invoke(APIGatewayEvent)\n{httpMethod, path, headers, body}
+
+== Event → http.Request ==
+Lambda -> Lambda : http.NewRequestWithContext(\nctx, "POST", "/auth/register", body)
+Lambda -> Lambda : copy headers from event
+Lambda -> Router : MatchRoute("/auth/register")
+
+== Route Dispatch ==
+Router -> Router : iterate Routes\nexact match "/auth/register"
+Router --> Lambda : handler.AuthRegister
+
+== Handler ==
+Lambda -> Handler : AuthRegister(w, r)
+Handler -> Handler : w.Header().Set("Content-Type",\n"application/json")
+Handler -> Handler : json.NewDecoder(r.Body).Decode(&user)
+
+alt invalid body
+    Handler -> Handler : w.WriteHeader(400)\nResponse{error:"invalid request body"}
+    Handler --> Lambda : 400
+    Lambda --> APIGW : apiGatewayResponse(400, resp)
+    APIGW --> Client : 400 Bad Request
+else body OK
+    Handler -> Register : Registration(user, ip, ua)
+
+    == Business Logic ==
+    Register -> Register : validate username/email/password
+
+    alt validation fails
+        Register --> Handler : error
+        Handler -> Handler : w.WriteHeader(500)\nResponse{error: err}
+    else validation OK
+        Register -> JWT : NewAccessToken(subject, ip, ua)
+        JWT --> Register : accessJWT
+        Register -> JWT : accessJWT.Sign(PrivateKey)
+        JWT --> Register : accessTokenStr (RS256)
+
+        Register -> JWT : NewRefreshToken(subject, ip, ua)
+        JWT --> Register : refreshJWT
+        Register -> JWT : refreshJWT.Sign(PrivateKey)
+        JWT --> Register : refreshTokenStr (RS256)
+
+        Register --> Handler : JwtResponse{access, refresh, expires, actor}
+
+        == Persistence (best-effort) ==
+        Handler -> Persist : PersistUserFunc(ctx, user, jwtResp)
+
+        alt AWS Ready
+            Persist -> DB : aws.Insert(DynamoDB, "Users", item)
+        else Aliyun Ready
+            Persist -> DB : aliyun.Insert(TableStore, "Users", item)
+        else no backend
+            note over Persist : silently skipped
+        end
+
+        alt persist fails
+            DB --> Persist : error
+            note over Handler : error logged — response NOT blocked\nclient already has valid JWT
+        end
+
+        Handler -> Handler : json.Encode(Response{\n200, jwtResponse})
+    end
+end
+
+== Response Envelope ==
+Handler --> Lambda : writes to responseRecorder\n(statusCode + body)
+Lambda -> Lambda : json.Unmarshal(w.body, &resp)\n→ model.Response
+Lambda -> Lambda : apiGatewayResponse(statusCode, resp)
+note right of Lambda : injects DefaultSecurityHeaders\n(CSP, HSTS, XFO, CORP, COEP, COOP...)
+Lambda --> APIGW : {statusCode, headers, body}
+
+APIGW -> APIGW : unpack envelope
+APIGW --> Client : HTTP 200\nContent-Type: application/json\n...15 security headers...\n{"status_code":200,"data":{...}}
+
+@enduml

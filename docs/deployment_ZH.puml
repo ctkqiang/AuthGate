@@ -1,0 +1,63 @@
+@startuml deployment
+!theme plain
+title AuthGate — 部署拓扑
+
+skinparam rectangleBorderColor #555555
+skinparam nodeBorderColor #555555
+
+' ── 云端 ──
+rectangle "AWS 云\n(us-east-1)" as AWSCloud #FF990022 {
+    node "API Gateway\nREST / HTTP API" as AWSAPIGW
+    node "Lambda\nauthgate" as AWSLambda
+    node "DynamoDB\nUsers 表" as AWSDDB
+    node "S3\nauthgate-keys" as AWSS3
+    node "CloudWatch\n日志" as AWSLogs
+
+    AWSAPIGW --> AWSLambda : Lambda 代理集成
+    AWSLambda --> AWSDDB : GetItem / PutItem\nIAM 角色
+    AWSLambda --> AWSS3 : GetObject / PutObject\n.pem 密钥
+    AWSLambda --> AWSLogs : 结构化日志
+}
+
+rectangle "阿里云\n(cn-hangzhou)" as AliCloud #FF6A0022 {
+    node "FC HTTP 触发器" as ALIFC
+    node "函数计算\nauthgate" as ALIFunc
+    node "TableStore\nUsers 表" as ALITS
+    node "OSS\nauthgate-keys" as ALIOSS
+    node "CloudMonitor\n日志服务" as ALILogs
+
+    ALIFC --> ALIFunc : HTTP 触发器\n(匿名)
+    ALIFunc --> ALITS : GetRow / PutRow\nRAM 角色
+    ALIFunc --> ALIOSS : GetObject / PutObject\n.pem 密钥
+    ALIFunc --> ALILogs : 结构化日志
+}
+
+' ── 本地 ──
+rectangle "本地开发\n(macOS)" as Local #EEEEEE {
+    node "authgate\nnet/http :8000" as LocalServer
+    node "RSA-2048\n仅内存" as LocalKeys
+    node "终端\nANSI 彩色日志" as LocalLogs
+
+    LocalServer --> LocalKeys : 自动生成
+    LocalServer --> LocalLogs : 彩色输出
+}
+
+' ── 客户端 ──
+actor "客户端" as Client
+Client --> AWSAPIGW : HTTPS\n/api/*
+Client --> ALIFC : HTTPS\n/api/*
+Client --> LocalServer : HTTP\nlocalhost:8000
+
+' ── 开发者 ──
+actor "开发者" as Dev
+Dev --> AWSLambda : aws lambda update-function-code
+Dev --> ALIFunc : zip 上传
+Dev --> LocalServer : go run main.go
+
+' ── CI/CD ──
+rectangle "代码仓库" as Git #333333 {
+    node "GitCode\n/ GitHub" as Repo
+}
+Dev --> Repo : git push
+
+@enduml
