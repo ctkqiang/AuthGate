@@ -18,8 +18,8 @@ type User struct {
 	Email    string `gorm:"type:varchar(100);unique;not null"`
 	Password string `gorm:"type:varchar(255);not null"`
 
-	Gender Gender `gorm:"type:tinyint(1);not null;default:0"`
-	Locale Locale `gorm:"type:varchar(10);not null;default:en"`
+	Gender *Gender `gorm:"type:tinyint(1);not null;default:0"`
+	Locale *Locale `gorm:"type:varchar(10);not null;default:en"`
 
 	AccessToken  string `gorm:"type:varchar(255)"`
 	RefreshToken string `gorm:"type:varchar(255)"`
