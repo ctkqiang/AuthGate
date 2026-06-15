@@ -62,3 +62,5 @@ config.json
 *.log
 log/
 /tmp/
+
+postman_collection.json

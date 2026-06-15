@@ -2,6 +2,7 @@ package main
 
 import (
 	"authgate/internal/aliyun"
+	"authgate/internal/authentication"
 	"authgate/internal/aws"
 	"authgate/internal/config"
 	"authgate/internal/handler"
@@ -9,6 +10,7 @@ import (
 	"authgate/internal/persistence"
 	"authgate/internal/service"
 	"authgate/internal/utilities"
+	"context"
 )
 
 func main() {
@@ -16,7 +18,32 @@ func main() {
 
 	providers := SupportedProvider()
 
-	// Initialise every enabled provider.
+	// Phase 1 — Initialise cloud SDKs for every enabled provider.
+	//
+	// This must happen before key loading and persistence because
+	// S3 / OSS / DynamoDB / TableStore clients depend on the
+	// global Account singleton being populated.
+	for _, provider := range providers {
+		switch provider {
+		case model.AWS:
+			if err := aws.Initialize(context.Background()); err != nil {
+				utilities.Error("AWS SDK init failed: %v", err)
+			}
+		case model.ALIYUN:
+			if err := aliyun.Initialize(); err != nil {
+				utilities.Error("Aliyun SDK init failed: %v", err)
+			}
+		}
+	}
+
+	// Load or generate JWT signing keys.
+	//   - Cloud (Lambda/FC) → download from S3/OSS; if missing, generate + upload
+	//   - Local              → generate in-memory only, do NOT touch cloud storage
+	if err := authentication.EnsureKeys(); err != nil {
+		utilities.Error("authentication.EnsureKeys: %v", err)
+	}
+
+	// Phase 2 — Register cloud runtime handlers.
 	//
 	// In a cloud runtime (AWS Lambda / Aliyun FC) the corresponding
 	// Initialize* call blocks forever because it registers the runtime

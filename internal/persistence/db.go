@@ -27,12 +27,12 @@ func LookupUser(ctx context.Context, username string) (map[string]interface{}, e
 	key := map[string]interface{}{"username": username}
 
 	switch {
-	case awsCfg.AccessKeyID != "" && awsCfg.Region != "" && awsCfg.DynamoDBTable != "":
+	case awsCfg.AccessKeyID != "" && awsCfg.Region != "" && awsCfg.DynamoDBTable != "" && aws.Ready():
 		utilities.LogProgress("persistence", "LookupUser",
 			fmt.Sprintf("provider=aws table=%s username=%s", awsCfg.DynamoDBTable, username))
 		return aws.GetById(ctx, awsCfg.DynamoDBTable, key)
 
-	case aliCfg.AccessKeyID != "" && aliCfg.Region != "" && aliCfg.TableStoreTable != "":
+	case aliCfg.AccessKeyID != "" && aliCfg.Region != "" && aliCfg.TableStoreTable != "" && aliyun.Ready():
 		utilities.LogProgress("persistence", "LookupUser",
 			fmt.Sprintf("provider=aliyun table=%s username=%s", aliCfg.TableStoreTable, username))
 		return aliyun.GetById(ctx, aliCfg.TableStoreTable, key)
@@ -63,13 +63,13 @@ func PersistUser(ctx context.Context, user model.User, jwtResp model.JwtResponse
 	}
 
 	switch {
-	case awsCfg.AccessKeyID != "" && awsCfg.Region != "" && awsCfg.DynamoDBTable != "":
+	case awsCfg.AccessKeyID != "" && awsCfg.Region != "" && awsCfg.DynamoDBTable != "" && aws.Ready():
 		utilities.LogProgress("persistence", "PersistUser",
 			fmt.Sprintf("provider=aws table=%s", awsCfg.DynamoDBTable))
 		_, err := aws.Insert(ctx, awsCfg.DynamoDBTable, item)
 		return err
 
-	case aliCfg.AccessKeyID != "" && aliCfg.Region != "" && aliCfg.TableStoreTable != "":
+	case aliCfg.AccessKeyID != "" && aliCfg.Region != "" && aliCfg.TableStoreTable != "" && aliyun.Ready():
 		utilities.LogProgress("persistence", "PersistUser",
 			fmt.Sprintf("provider=aliyun table=%s", aliCfg.TableStoreTable))
 		_, err := aliyun.Insert(ctx, aliCfg.TableStoreTable, item)
