@@ -7,6 +7,7 @@
 package service
 
 import (
+	"authgate/internal/config"
 	"authgate/internal/model"
 	"authgate/internal/utilities"
 	"fmt"
@@ -14,16 +15,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-)
-
-const (
-	// Addr is the local development listen address.
-	Addr = "0.0.0.0:8000"
-
-	// IndexPath  is the root health-check endpoint.
-	IndexPath = "/"
-	// HealthPath is the /health liveness probe endpoint.
-	HealthPath = "/health"
 )
 
 // RouteEntry pairs a URL path with its handler function.  The [Routes]
@@ -37,8 +28,9 @@ type RouteEntry struct {
 // handler, and Aliyun FC handler.  Add new endpoints here to make them
 // available in every environment.
 var Routes = []RouteEntry{
-	{Path: IndexPath, Handler: model.Index},
-	{Path: HealthPath, Handler: model.Health},
+	{Path: config.IndexPath, Handler: model.Index},
+	{Path: config.HealthPath, Handler: model.Health},
+	{Path: config.AuthRegister, Handler: model.AuthRegister},
 }
 
 // IsLocalMode reports whether none of the supported cloud runtimes
@@ -58,14 +50,14 @@ func IsLocalMode() bool {
 // shutdown on SIGINT / SIGTERM.  This function blocks until the server
 // stops.
 func StartLocalServer() {
-	utilities.LogProgress("HTTP", "Starting local server", Addr)
+	utilities.LogProgress("HTTP", "Starting local server", config.Addr)
 
 	mux := http.NewServeMux()
 	for _, entry := range Routes {
 		mux.HandleFunc(entry.Path, logRequest(entry.Handler))
 	}
 
-	srv := &http.Server{Addr: Addr, Handler: mux}
+	srv := &http.Server{Addr: config.Addr, Handler: mux}
 
 	go func() {
 		stop := make(chan os.Signal, 1)
