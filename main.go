@@ -8,6 +8,7 @@ import (
 	"authgate/internal/handler"
 	"authgate/internal/model"
 	"authgate/internal/persistence"
+	"authgate/internal/security"
 	"authgate/internal/service"
 	"authgate/internal/utilities"
 	"context"
@@ -69,11 +70,28 @@ func main() {
 		}
 	}
 
+	// Emit startup info to CloudWatch / CloudMonitor when running in
+	// cloud mode. These are no-ops in local mode.
+	aws.LogStartupInfo()
+	aliyun.LogStartupInfo()
+
 	// Wire the persistence callbacks into the handler so that
 	// AuthRegister / AuthLogin can read and write users to the
 	// configured database backend without creating an import cycle.
 	handler.PersistUserFunc = persistence.PersistUser
 	handler.LookupUserFunc = persistence.LookupUser
+
+	// Wire the security logging callback so the middleware can route
+	// threat detections to CloudWatch / CloudMonitor without importing
+	// aws/aliyun directly (avoids import cycle).
+	handler.SecurityLogFunc = func(method, path, srcIP, ua string, matches []security.ThreatMatch) {
+		aws.LogSecurityEvent(method, path, srcIP, ua, matches)
+		aws.EmitSecurityMetric(matches)
+		aws.LogThreatSummary(path, len(matches), security.HighestSeverity(matches).String())
+
+		aliyun.LogSecurityEvent(method, path, srcIP, ua, matches)
+		aliyun.LogThreatSummary(path, len(matches), security.HighestSeverity(matches).String())
+	}
 
 	// If a cloud runtime took over, we never reach this point.
 	// Otherwise, start a single local HTTP server on Addr.

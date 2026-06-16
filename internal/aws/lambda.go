@@ -14,6 +14,7 @@
 package aws
 
 import (
+	"authgate/internal/handler"
 	"authgate/internal/model"
 	"authgate/internal/service"
 	"authgate/internal/utilities"
@@ -121,15 +122,15 @@ func HandleAPIGatewayEvent(ctx context.Context, event model.APIGatewayEvent) (ma
 	)
 
 	w := newResponseRecorder()
-	handler := service.MatchRoute(event.Path)
-	if handler == nil {
+	h := service.MatchRoute(event.Path)
+	if h == nil {
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(model.Response{
 			StatusCode: model.StatusCode(http.StatusNotFound),
 			Data:       map[string]string{"error": "not found"},
 		})
 	} else {
-		handler(w, req)
+		handler.SecurityMiddleware(h)(w, req)
 	}
 
 	// Attempt to unmarshal the route handler's output as model.Response.

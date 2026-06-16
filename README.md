@@ -59,11 +59,11 @@ main()
 
 ### Environment Detection
 
-| Env Vars | Meaning | Behavior |
-|---|---|---|
-| `_LAMBDA_SERVER_PORT` + `AWS_LAMBDA_RUNTIME_API` | AWS Lambda runtime | `lambda.Start()` blocks, registers `HandleAPIGatewayEvent` |
-| `FC_FUNCTION_NAME` | Alibaba Cloud FC runtime | `fc.StartHttp()` blocks, registers `fcHTTPHandler` |
-| Neither | Local development | `net/http` listens on `0.0.0.0:8000` |
+| Env Vars                                         | Meaning                  | Behavior                                                   |
+| ------------------------------------------------ | ------------------------ | ---------------------------------------------------------- |
+| `_LAMBDA_SERVER_PORT` + `AWS_LAMBDA_RUNTIME_API` | AWS Lambda runtime       | `lambda.Start()` blocks, registers `HandleAPIGatewayEvent` |
+| `FC_FUNCTION_NAME`                               | Alibaba Cloud FC runtime | `fc.StartHttp()` blocks, registers `fcHTTPHandler`         |
+| Neither                                          | Local development        | `net/http` listens on `0.0.0.0:8000`                       |
 
 ### Request Lifecycle (`POST /auth/register`)
 
@@ -169,6 +169,7 @@ go run main.go
 ```
 
 Output:
+
 ```
 [AuthGate@...]::INFO:: (Configuration loaded successfully:DecodeFile>>TASK-000::...)
 [AuthGate@...]::INFO:: (auth:EnsureKeys>>...)  Progress=local mode — keys kept in memory only
@@ -194,6 +195,7 @@ dynamodb_table = "Users"
 ```
 
 On restart the startup flow automatically:
+
 1. Calls STS `GetCallerIdentity` to verify IAM
 2. Downloads `private.pem` / `public.pem` from S3
 3. If not found → generates RSA-2048 → uploads to S3
@@ -203,15 +205,15 @@ On restart the startup flow automatically:
 
 ### Endpoints
 
-| # | Method | Path | Auth | Body | → 200 | → 4xx |
-|---|---|---|---|---|---|---|
-| 1 | GET | `/` | — | — | `service, status` | — |
-| 2 | GET | `/health` | — | — | `status: healthy` | — |
-| 3 | POST | `/auth/register` | — | `User` JSON | JWT response | 400/500 |
-| 4 | POST | `/auth/login` | — | `EmailPasswordAuthRequest` | JWT response | 401 |
-| 5 | POST | `/auth/logout` | — | `access_token` | `logged out` | — |
-| 6 | POST | `/auth/refresh` | — | `refresh_token` | new JWT pair | 401 |
-| 7 | POST | `/auth/provider/{name}` | — | `subject, email` | JWT response | 401/400 |
+| #   | Method | Path                    | Auth | Body                       | → 200             | → 4xx   |
+| --- | ------ | ----------------------- | ---- | -------------------------- | ----------------- | ------- |
+| 1   | GET    | `/`                     | —    | —                          | `service, status` | —       |
+| 2   | GET    | `/health`               | —    | —                          | `status: healthy` | —       |
+| 3   | POST   | `/auth/register`        | —    | `User` JSON                | JWT response      | 400/500 |
+| 4   | POST   | `/auth/login`           | —    | `EmailPasswordAuthRequest` | JWT response      | 401     |
+| 5   | POST   | `/auth/logout`          | —    | `access_token`             | `logged out`      | —       |
+| 6   | POST   | `/auth/refresh`         | —    | `refresh_token`            | new JWT pair      | 401     |
+| 7   | POST   | `/auth/provider/{name}` | —    | `subject, email`           | JWT response      | 401/400 |
 
 ### Register
 
@@ -245,16 +247,16 @@ curl -X POST http://0.0.0.0:8000/auth/refresh \
 
 Supported providers:
 
-| Name | Platform | Example Subject |
-|---|---|---|
-| `google` | Google OAuth | `google-oauth2\|123` |
-| `github` | GitHub OAuth | `github\|987654` |
-| `weixin` | WeChat | `wechat-openid\|oAb...` |
-| `weibo` | Weibo | `weibo\|uid` |
-| `douyin` | Douyin | `dy\|openid` |
-| `tiktok` | TikTok | `tt\|openid` |
-| `kuaishou` | Kuaishou | `ks\|openid` |
-| `gitcode` | GitCode | `gitcode\|uid` |
+| Name       | Platform     | Example Subject         |
+| ---------- | ------------ | ----------------------- |
+| `google`   | Google OAuth | `google-oauth2\|123`    |
+| `github`   | GitHub OAuth | `github\|987654`        |
+| `weixin`   | WeChat       | `wechat-openid\|oAb...` |
+| `weibo`    | Weibo        | `weibo\|uid`            |
+| `douyin`   | Douyin       | `dy\|openid`            |
+| `tiktok`   | TikTok       | `tt\|openid`            |
+| `kuaishou` | Kuaishou     | `ks\|openid`            |
+| `gitcode`  | GitCode      | `gitcode\|uid`          |
 
 ```bash
 curl -X POST http://0.0.0.0:8000/auth/provider/google \
@@ -393,6 +395,7 @@ aws lambda update-function-code \
 ```
 
 Lambda startup automatically:
+
 - Obtains temporary credentials via IAM Role (no keys in config.toml needed)
 - Downloads `.pem` keys from S3; auto-generates and uploads on first run
 - Accepts API Gateway proxy events, dispatches via `service.Routes`
@@ -423,15 +426,15 @@ Import `postman_collection.json` — includes request templates and test scripts
 
 ## JWT Security
 
-| Feature | Implementation |
-|---|---|
-| Signing Algorithm | RS256 (RSA 2048-bit) |
-| Access Token TTL | 3600s (1 hour) |
-| Refresh Token TTL | 604800s (7 days) |
-| Token Binding | `ip_address` + `user_agent` in claims |
-| Scope Isolation | access → `api:access`, refresh → `token:refresh` |
-| Unique ID | `jti` — UUID per token, enables blacklisting |
-| Key Storage | S3/OSS encrypted at rest; local mode in-memory only |
+| Feature           | Implementation                                      |
+| ----------------- | --------------------------------------------------- |
+| Signing Algorithm | RS256 (RSA 2048-bit)                                |
+| Access Token TTL  | 3600s (1 hour)                                      |
+| Refresh Token TTL | 604800s (7 days)                                    |
+| Token Binding     | `ip_address` + `user_agent` in claims               |
+| Scope Isolation   | access → `api:access`, refresh → `token:refresh`    |
+| Unique ID         | `jti` — UUID per token, enables blacklisting        |
+| Key Storage       | S3/OSS encrypted at rest; local mode in-memory only |
 
 ### Security Response Headers
 
@@ -463,15 +466,15 @@ Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS, PATCH
 
 ## Tech Stack
 
-| Dependency | Purpose |
-|---|---|
-| `github.com/golang-jwt/jwt/v5` | JWT RS256 signing & verification |
-| `github.com/google/uuid` | JTI generation |
-| `github.com/BurntSushi/toml` | TOML config parsing |
-| `github.com/aws/aws-sdk-go-v2` | AWS Lambda, DynamoDB, S3, STS |
-| `github.com/aws/aws-lambda-go` | Lambda runtime |
-| `github.com/aliyun/alibaba-cloud-sdk-go` | Alibaba Cloud STS |
-| `github.com/aliyun/aliyun-oss-go-sdk` | Alibaba Cloud OSS |
-| `github.com/aliyun/aliyun-tablestore-go-sdk` | Alibaba Cloud TableStore |
-| `github.com/aliyun/fc-runtime-go-sdk` | Alibaba Cloud FC runtime |
-| `gorm.io/gorm` | ORM (MySQL, reserved) |
+| Dependency                                   | Purpose                          |
+| -------------------------------------------- | -------------------------------- |
+| `github.com/golang-jwt/jwt/v5`               | JWT RS256 signing & verification |
+| `github.com/google/uuid`                     | JTI generation                   |
+| `github.com/BurntSushi/toml`                 | TOML config parsing              |
+| `github.com/aws/aws-sdk-go-v2`               | AWS Lambda, DynamoDB, S3, STS    |
+| `github.com/aws/aws-lambda-go`               | Lambda runtime                   |
+| `github.com/aliyun/alibaba-cloud-sdk-go`     | Alibaba Cloud STS                |
+| `github.com/aliyun/aliyun-oss-go-sdk`        | Alibaba Cloud OSS                |
+| `github.com/aliyun/aliyun-tablestore-go-sdk` | Alibaba Cloud TableStore         |
+| `github.com/aliyun/fc-runtime-go-sdk`        | Alibaba Cloud FC runtime         |
+| `gorm.io/gorm`                               | ORM (MySQL, reserved)            |

@@ -14,6 +14,7 @@
 package aliyun
 
 import (
+	"authgate/internal/handler"
 	"authgate/internal/model"
 	"authgate/internal/service"
 	"authgate/internal/utilities"
@@ -108,12 +109,12 @@ func fcHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	for _, entry := range service.Routes {
 		if entry.Prefix {
 			if strings.HasPrefix(r.URL.Path, entry.Path) {
-				entry.Handler(w, r)
+				handler.SecurityMiddleware(entry.Handler)(w, r)
 				return
 			}
 		} else {
 			if r.URL.Path == entry.Path {
-				entry.Handler(w, r)
+				handler.SecurityMiddleware(entry.Handler)(w, r)
 				return
 			}
 		}

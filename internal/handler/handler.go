@@ -132,8 +132,11 @@ func AuthLogout(w http.ResponseWriter, r *http.Request) {
 
 	json.NewDecoder(r.Body).Decode(&body)
 
-	utilities.LogProgress("handler", "AuthLogout",
-		fmt.Sprintf("token=%s", utilities.Mask(body.AccessToken)))
+	utilities.LogProgress(
+		"handler",
+		"AuthLogout",
+		fmt.Sprintf("token=%s", utilities.Mask(body.AccessToken)),
+	)
 
 	json.NewEncoder(w).Encode(model.Response{
 		StatusCode: 200,

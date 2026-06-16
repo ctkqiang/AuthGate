@@ -80,11 +80,8 @@ func StartLocalServer() {
 
 	mux := http.NewServeMux()
 	for _, entry := range Routes {
-		if entry.Prefix {
-			mux.HandleFunc(entry.Path, logRequest(entry.Handler))
-		} else {
-			mux.HandleFunc(entry.Path, logRequest(entry.Handler))
-		}
+		wrapped := handler.SecurityMiddleware(logRequest(entry.Handler))
+		mux.HandleFunc(entry.Path, wrapped)
 	}
 
 	srv := &http.Server{Addr: config.Addr, Handler: mux}
