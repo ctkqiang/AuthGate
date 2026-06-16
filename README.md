@@ -822,3 +822,23 @@ Current version stores passwords as-is in DynamoDB/TableStore. Production deploy
 | `github.com/aliyun/aliyun-tablestore-go-sdk` | — | TableStore GetRow / PutRow / UpdateRow |
 | `github.com/aliyun/fc-runtime-go-sdk` | v0.3.1 | FC runtime (`fc.StartHttp`) |
 | `gorm.io/gorm` | v1.31.1 | ORM (reserved for future MySQL support) |
+
+---
+
+## License
+
+MIT License. Copyright (c) 2026 ctkqiang. See [LICENSE](LICENSE) for full text.
+
+---
+
+## Support
+
+If you find this project helpful, consider buying me a coffee ☕️ — your support keeps this project alive and improving!
+
+<p align="center">
+  <strong>WeChat Donation</strong><br/>
+  <img src="https://raw.gitcode.com/ctkqiang_sr/ctkqiang_sr/raw/main/mm_reward_qrcode_1778988737577.png"
+       alt="WeChat QR Code"
+       width="240"
+       style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+</p>

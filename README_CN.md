@@ -785,3 +785,23 @@ Access-Control-Expose-Headers: X-Request-ID, X-RateLimit-Remaining, X-RateLimit-
 | `github.com/aliyun/aliyun-tablestore-go-sdk` | — | TableStore GetRow / PutRow / UpdateRow |
 | `github.com/aliyun/fc-runtime-go-sdk` | v0.3.1 | FC 运行时（`fc.StartHttp`） |
 | `gorm.io/gorm` | v1.31.1 | ORM（MySQL 预留） |
+
+---
+
+## 许可证
+
+MIT License. Copyright (c) 2026 ctkqiang. 完整文本见 [LICENSE](LICENSE)。
+
+---
+
+## 支持
+
+如果您觉得本项目对您有帮助，欢迎请我喝杯咖啡 ☕️，您的支持是我持续维护和改进的动力！
+
+<p align="center">
+  <strong>微信扫码捐赠</strong><br/>
+  <img src="https://raw.gitcode.com/ctkqiang_sr/ctkqiang_sr/raw/main/mm_reward_qrcode_1778988737577.png"
+       alt="微信扫码捐赠"
+       width="240"
+       style="border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+</p>
