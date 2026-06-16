@@ -29,7 +29,55 @@
 
 ## Architecture
 
-**Pattern:** Ports & Adapters (Hexagonal Architecture, simplified).
+**Pattern: Ports & Adapters + Callback Injection + Detection Security Layer**
+
+Four layers, three core mechanisms:
+
+```
+                        main.go
+  5-phase startup: Config → SDK Init → Keys → Runtime → Wire
+        │            │            │           │
+   ┌────▼───┐  ┌─────▼────┐  ┌────▼────┐  ┌──▼──────┐
+   │Persist │  │ Lookup   │  │Security │  │ Routes  │  ← 3 callbacks + 1 table
+   │UserFunc│  │ UserFunc │  │ LogFunc │  │(7 routes)│     injected, zero cycles
+   └────┬───┘  └────┬─────┘  └────┬────┘  └──┬──────┘
+        │           │             │           │
+   ┌────▼───────────▼─────────────▼───────────▼──────┐
+   │                  handler/                        │
+   │  SecurityMiddleware → Route → Business Logic    │
+   │  (register / login / refresh / provider)        │
+   └────────────────────┬───────────────────────────┘
+                        │
+   ┌────────────────────┼───────────────────────────┐
+   │                    │                            │
+   ▼                    ▼                            ▼
+┌──────────┐  ┌──────────────────┐  ┌──────────────────────┐
+│ aws/     │  │ aliyun/          │  │ service/server.go    │
+│ Lambda   │  │ FC Dispatch      │  │ net/http :8000        │
+│ Dispatch │  │                  │  │ Dispatch              │
+└────┬─────┘  └───────┬──────────┘  └──────────┬───────────┘
+     │                │                        │
+     ▼                ▼                        ▼
+  CloudWatch      CloudMonitor              Terminal
+  (JSON+EMF)      (JSON+SLS)               (ANSI)
+```
+
+| Layer | Package | Responsibility |
+|---|---|---|
+| **Port** | `service/` | `Routes` slice — 7 endpoints, single source of truth |
+| **Adapters** | `aws/` `aliyun/` | Cloud event → `http.HandlerFunc`; DynamoDB/TableStore/S3/OSS CRUD; CloudWatch/CloudMonitor security logging |
+| **Business** | `handler/` | Auth logic + `SecurityMiddleware` (pattern scan + rate detection) |
+| **Shared Kernel** | `model/` | Pure data structures, zero internal dependencies |
+
+**Three core mechanisms:**
+
+1. **Callback Injection** — `handler/` imports zero cloud packages. Three function pointers (`PersistUserFunc`, `LookupUserFunc`, `SecurityLogFunc`) are wired by `main.go`, breaking the `handler → persistence → aws → service → handler` cycle.
+
+2. **Detection-Only Security** — Every request passes pattern scan (13 groups, ~90 regexes) + sliding-window rate check (5 thresholds). Threats are logged to CloudWatch/SLS. Never blocked — enforcement is at the WAF layer.
+
+3. **Environment Auto-Detection** — `_LAMBDA_SERVER_PORT` → `lambda.Start()`, `FC_FUNCTION_NAME` → `fc.StartHttp()`, neither → `net/http :8000`. Zero-config switching.
+
+### Architecture Diagram
 
 `service.Routes` is the canonical port — a single `[]RouteEntry` slice that defines every API endpoint. Three adapters (`aws/lambda.go`, `aliyun/functions.go`, `service/server.go`) each translate platform-specific invocation protocols into standard `http.HandlerFunc` calls against that same route table.
 

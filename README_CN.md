@@ -28,7 +28,55 @@
 
 ## 架构设计
 
-**模式：** Ports & Adapters（六边形架构简化版）。
+**模式：Ports & Adapters + 回调注入 + 检测式安全层**
+
+四层结构，三个核心机制：
+
+```
+                        main.go
+  五阶段启动: Config → SDK Init → Keys → Runtime → Wire
+        │            │            │           │
+   ┌────▼───┐  ┌─────▼────┐  ┌────▼────┐  ┌──▼──────┐
+   │Persist │  │ Lookup   │  │Security │  │ Routes  │  ← 3 个回调 + 1 张路由表
+   │UserFunc│  │ UserFunc │  │ LogFunc │  │(7 端点)   │    全部注入，零循环依赖
+   └────┬───┘  └────┬─────┘  └────┬────┘  └──┬──────┘
+        │           │             │           │
+   ┌────▼───────────▼─────────────▼───────────▼──────┐
+   │                  handler/                        │
+   │  SecurityMiddleware → 路由分发 → 业务逻辑        │
+   │  (注册 / 登录 / 刷新 / 第三方登录)                │
+   └────────────────────┬───────────────────────────┘
+                        │
+   ┌────────────────────┼───────────────────────────┐
+   │                    │                            │
+   ▼                    ▼                            ▼
+┌──────────┐  ┌──────────────────┐  ┌──────────────────────┐
+│ aws/     │  │ aliyun/          │  │ service/server.go    │
+│ Lambda   │  │ FC 分发          │  │ net/http :8000        │
+│ 分发     │  │                  │  │ 分发                  │
+└────┬─────┘  └───────┬──────────┘  └──────────┬───────────┘
+     │                │                        │
+     ▼                ▼                        ▼
+  CloudWatch      CloudMonitor              终端
+  (JSON+EMF)      (JSON+SLS)              (ANSI)
+```
+
+| 层 | 包 | 职责 |
+|---|---|---|
+| **端口** | `service/` | `Routes` 切片 — 7 端点，唯一真相源 |
+| **适配器** | `aws/` `aliyun/` | 云事件 → `http.HandlerFunc`；DynamoDB/TableStore/S3/OSS CRUD；CloudWatch/CloudMonitor 安全日志 |
+| **业务** | `handler/` | 认证逻辑 + `SecurityMiddleware`（模式扫描 + 速率检测） |
+| **共享内核** | `model/` | 纯数据结构，零内部依赖 |
+
+**三个核心机制：**
+
+1. **回调注入** — `handler/` 不 import 任何云包。三个函数指针（`PersistUserFunc`、`LookupUserFunc`、`SecurityLogFunc`）由 `main.go` 注入，打破 `handler → persistence → aws → service → handler` 的循环依赖。
+
+2. **检测不阻断** — 每个请求经过模式扫描（13 组，~90 条正则）+ 滑动窗口速率检测（5 级阈值）。威胁日志写入 CloudWatch/SLS。永不阻断 — 阻断策略在 WAF 层执行。
+
+3. **环境自适应** — `_LAMBDA_SERVER_PORT` → `lambda.Start()`，`FC_FUNCTION_NAME` → `fc.StartHttp()`，都没有 → `net/http :8000`。零配置切换。
+
+### 架构图
 
 `service.Routes` 是唯一端口 — 一个 `[]RouteEntry` 切片定义了所有 API 端点。三个适配器（`aws/lambda.go`、`aliyun/functions.go`、`service/server.go`）各自将平台特定的调用协议翻译为标准 `http.HandlerFunc`，统一对同一张路由表进行分发。
 
