@@ -1,109 +1,67 @@
-// Package utilities provides structured logging with AWS CloudWatch integration.
+// Package utilities provides structured, colour-coded logging compatible
+// with AWS CloudWatch Logs and Alibaba Cloud Log Service (SLS).
 //
-// All log output is dumped to AWS CloudWatch Logs for centralized debugging,
-// monitoring, and alerting. This includes:
-//   - Structured log entries with component, operation, status, elapsed time, and memory
-//   - Goroutine correlation via TASK-### IDs for tracing request lifecycles
-//   - Performance metrics (heap memory, goroutine count, uptime) for health monitoring
-//   - Error/Warn/Info/Debug/Verbose levels with cost-optimized filtering
+// Log entries are written to stdout so they are captured by Lambda / FC
+// runtimes automatically.  The structured block format (Logf) includes
+// goroutine correlation IDs, memory stats, and elapsed time for tracing
+// request lifecycles and detecting leaks.
 //
-// CloudWatch Logs Insights queries can be used to search, filter, and aggregate
-// logs across all running instances. See individual function docs for query examples.
+// CloudWatch Logs Insights query examples:
 //
-// CloudWatch Agent Configuration (AmazonCloudWatchAgent):
+//	All errors:    filter Status = "FAIL" | sort @timestamp desc
+//	By component:  filter Component = "Security" | stats count() by Operation
+//	Slow ops:      filter Elapsed ~= /[0-9]+s/
 //
-//	{
-//	  "logs": {
-//	    "logs_collected": {
-//	      "files": {
-//	        "collect_list": [
-//	          {
-//	            "file_path": "/var/log/identitycardocr/*.log",
-//	            "log_group_name": "/aws/identitycardocr/app",
-//	            "log_stream_name": "{instance_id}-{date}",
-//	            "timezone": "Asia/Kuala_Lumpur"
-//	          }
-//	        ]
-//	      }
-//	    }
-//	  }
-//	}
-//
-// For debugging: set LOG_LEVEL=DEBUG to dump all diagnostic logs to CloudWatch
-// for real-time troubleshooting. Remember to revert to INFO/WARN in production
-// to avoid excessive CloudWatch ingestion costs.
+//	SLS query examples:
+//	event: security.threat | SELECT severity, count(*) GROUP BY severity
 package utilities
 
 import (
 	"fmt"
 	"os"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
-// LogLevel defines the severity threshold for CloudWatch log emission.
-// Logs below the current level are filtered out to optimize costs and noise.
+// ── Constants ──────────────────────────────────────────────────────
+
+const (
+	APP_NAME = "AuthGate"
+	VERSION  = "1.0.0"
+	TZ       = "CST"
+)
+
+// LogLevel controls the minimum severity emitted.
 type LogLevel int
 
 const (
-	// APP_NAME identifies logs in CloudWatch for filtering: [AuthGate] message
-	APP_NAME = "AuthGate"
-	// VERSION tracks schema compatibility for log parsing in CloudWatch Logs Insights
-	VERSION = "1.0.0"
-	// TZ is the timezone identifier for log timestamps (Beijing Time)
-	TZ = "CST"
+	DEBUG    LogLevel = iota // verbose diagnostics (local dev only)
+	INFO                     // general operational messages (default)
+	WARN                     // recoverable issues, degraded mode
+	ERROR                    // failures requiring attention
+	VERBOSE                  // per-request metrics, audit trails
 )
 
-// Log level constants in ascending severity order.
-// Used for filtering: only logs >= CurrentLevel are emitted.
-// Example: if CurrentLevel=WARN, then DEBUG and INFO logs are dropped.
-//
-// CloudWatch Filtering (Logs Insights):
-//
-//	DEBUG: filter ispresent(Debug_Fields) | stats count() as debug_count
-//	INFO: [IdentityCardOCRService] INFO | stats count() as info_count
-//	WARN: [IdentityCardOCRService] WARN | stats count() as warn_count
-//	ERROR: [IdentityCardOCRService] ERROR | stats count() as error_count, count_by_component=count() by Component
-//	VERBOSE: [IdentityCardOCRService] VERBOSE | fields Component, Operation, elapsed, memory
-const (
-	// DEBUG (0): Detailed diagnostic information, usually disabled in production.
-	// Example: Field-level tracing, parameter dumps, internal state snapshots.
-	// Cost: ~200-500MB/day - only use during troubleshooting.
-	DEBUG LogLevel = iota
+func (l LogLevel) String() string {
+	switch l {
+	case DEBUG:
+		return "DEBUG"
+	case INFO:
+		return "INFO"
+	case WARN:
+		return "WARN"
+	case ERROR:
+		return "ERROR"
+	case VERBOSE:
+		return "VERBOSE"
+	default:
+		return "UNKNOWN"
+	}
+}
 
-	// INFO (1): General informational messages - DEFAULT for production.
-	// Example: Operation start/success, stock initialization, market status changes.
-	// Cost: ~10-50MB/day - balanced logging for monitoring.
-	INFO
-
-	// WARN (2): Warning conditions - non-critical issues that don't prevent operation.
-	// Example: Retries, connection timeouts, degraded performance, buffer full.
-	// Cost: ~1-10MB/day - minimal, useful for trend analysis.
-	WARN
-
-	// ERROR (3): Error conditions requiring immediate attention.
-	// Example: Failed inserts, database connection failures, authentication errors.
-	// Cost: ~0.1-1MB/day - triggers alerts and incidents.
-	ERROR
-
-	// VVERBOSE (4): Detailed operational metrics and performance data.
-	// Example: Per-tick statistics, batch size distribution, latency percentiles.
-	// Cost: ~50-200MB/day - use for 24-hour performance analysis.
-	VVERBOSE
-)
-
-var (
-	startTime       = time.Now()
-	CurrentLevel    = INFO
-	errorCallback   func(string)
-	statusCallbacks = make(map[string]func(StatusUpdate))
-	statusMutex     sync.RWMutex
-	goroutineSeq    = 0
-	goroutineMutex  sync.RWMutex
-)
+// ── ANSI colour codes ──────────────────────────────────────────────
 
 const (
 	colorReset  = "\033[0m"
@@ -116,232 +74,23 @@ const (
 	colorNoBold = "\033[22m"
 )
 
-// Bold wraps text with ANSI bold escape sequences so it stands out
-// in structured log output while surrounding text stays normal weight.
-//
-// Safe to nest inside any coloured log line; the bold attribute is
-// toggled independently of foreground colour.
-//
-// Usage:
-//
-//	utilities.LogProgress("HTTP", "Listening on "+utilities.Bold(addr), "tls=off")
-//	// header: (HTTP:Listening on **0.0.0.0:8000**>>TASK-001::main)
-//
-//	utilities.LogProgress("HTTP", "Shutting down", "signal="+utilities.Bold("SIGTERM"))
-//	// row:  | Progress : signal=**SIGTERM**
-func Bold(text string) string {
-	return colorBold + text + colorNoBold
-}
+// ── Global state ───────────────────────────────────────────────────
 
-func buildLogBlock(header string, color string, rows [][]string) string {
-	var sb strings.Builder
-	keyWidth := 0
-	for _, r := range rows {
-		if len(r) == 2 && len(r[0]) > keyWidth {
-			keyWidth = len(r[0])
-		}
-	}
+var (
+	CurrentLevel  = INFO
+	startTime     = time.Now()
+	errorCallback func(string)
+	goroutineSeq  int
+	goroutineMu   sync.Mutex
+)
 
-	sb.WriteString(color)
-	sb.WriteString(colorBold)
-	sb.WriteString(header)
-	sb.WriteString(colorReset)
-	sb.WriteString("\n")
+// ── Public API ─────────────────────────────────────────────────────
 
-	for _, r := range rows {
-		if len(r) == 2 {
-			sb.WriteString(fmt.Sprintf("%s  | %-*s : %s%s\n", color, keyWidth, r[0], r[1], colorReset))
-		}
-	}
-
-	return sb.String()
-}
-
-type StatusUpdate struct {
-	StockNo         string
-	LastPrice       float64
-	Volume          float64
-	BestAskSize     float64
-	BestAskCount    float64
-	BestBidPrice    float64
-	TimeReceived    string
-	TimeReceivedISO string
-	TotalRecords    string
-	SequenceNumber  string
-	CreatedAt       string
-	Message         string
-}
-
-func RegisterErrorCallback(cb func(string)) {
-	errorCallback = cb
-}
-
-func RegisterStatusCallback(id string, cb func(StatusUpdate)) {
-	statusMutex.Lock()
-	defer statusMutex.Unlock()
-	statusCallbacks[id] = cb
-}
-
-func UnregisterStatusCallback(id string) {
-	statusMutex.Lock()
-	defer statusMutex.Unlock()
-	delete(statusCallbacks, id)
-}
-
-// getGoroutineID generates a sequential TASK-### identifier for goroutine correlation.
-// Critical for CloudWatch Logs Insights to trace a single request through all goroutines.
-//
-// Each goroutine receives a unique sequential ID:
-//   - Main goroutine: TASK-000
-//   - Worker pool 1: TASK-001
-//   - Worker pool 2: TASK-002
-//   - Cron job: TASK-042
-//
-// CloudWatch Logs Insights Usage:
-//
-//	fields @timestamp, @message | filter Routine="TASK-042" | sort @timestamp
-//
-// This allows viewing the complete lifecycle of a single operation across all goroutines.
-// Example use case: Trace why a specific market data insertion failed:
-//
-//  1. Find error: LogError with TASK-042
-//  2. Search logs: Routine=TASK-042
-//  3. View timeline: All operations performed by that goroutine
-//  4. Identify root cause: Database connection failure, timeout, etc.
-func getGoroutineID() string {
-	goroutineMutex.Lock()
-	defer goroutineMutex.Unlock()
-	id := goroutineSeq
-	goroutineSeq++
-	return fmt.Sprintf("TASK-%03d", id)
-}
-
-func getCallerFunc(depth int) string {
-	pc, _, _, ok := runtime.Caller(depth)
-	if !ok {
-		return "Unknown"
-	}
-	fullName := runtime.FuncForPC(pc).Name()
-	parts := strings.Split(fullName, ".")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-	return fullName
-}
-
-// getMemStats returns current heap memory allocation in MB.
-// Embedded in every log entry for CloudWatch memory leak detection.
-//
-// CloudWatch Monitoring:
-//   - Track memory growth: avg(Memory) by bin(1h) | sort by time
-//   - Identify memory spikes: Memory > 500 (indicates potential leak)
-//   - Correlate with operations: Memory when batch_size=10000 vs batch_size=100
-//   - Set alarms: Memory > threshold triggers investigation
-//
-// Typical values for this service:
-//   - Baseline (idle): ~80-100 MB
-//   - During market open: ~150-200 MB
-//   - High load (1M ticks/sec): ~300-400 MB
-//   - Memory leak (24h uptime): Linear growth beyond normal
-//
-// Use in CloudWatch Insights:
-//
-//	fields @timestamp, Memory | filter Component="Feed" | stats max(Memory), avg(Memory) by bin(5m)
-func getMemStats() float64 {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	return float64(m.Alloc) / 1024 / 1024
-}
-
-func getLevelStr(level LogLevel) string {
-	switch level {
-	case DEBUG:
-		return "DEBUG"
-	case INFO:
-		return "INFO"
-	case WARN:
-		return "WARN"
-	case ERROR:
-		return "ERROR"
-	case VVERBOSE:
-		return "VERBOSE"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-func getLevelColor(level LogLevel) string {
-	switch level {
-	case DEBUG:
-		return colorYellow
-	case INFO:
-		return colorBlue
-	case WARN:
-		return colorPink
-	case ERROR:
-		return colorRed
-	case VVERBOSE:
-		return colorGreen
-	default:
-		return ""
-	}
-}
-
-func formatTimestamp() string {
-	now := time.Now()
-	return fmt.Sprintf("%d%02d%02d:%02d:%02d:%02d%s",
-		now.Year(), now.Month(), now.Day(),
-		now.Hour(), now.Minute(), now.Second(), TZ)
-}
-
-func formatHeader(level LogLevel, component, operation, goroutineID, function string) string {
-	timestamp := formatTimestamp()
-	return fmt.Sprintf("[%s@%s]::%s:: (%s:%s>>%s::%s)",
-		APP_NAME, timestamp, getLevelStr(level), component, operation, goroutineID, function)
-}
-
-// SetLogLevel configures the minimum log level for emission to CloudWatch.
-// Logs below the threshold are silently dropped to reduce log volume and costs.
-//
-// Log Levels (in increasing severity):
-//   - DEBUG (0): Detailed diagnostic information, usually disabled in production
-//   - INFO (1): General informational messages (default, recommended for production)
-//   - WARN (2): Warning conditions that don't prevent operation (retries, degraded mode)
-//   - ERROR (3): Error conditions requiring immediate attention
-//   - VERBOSE (4): Detailed operational metrics and performance data
-//
-// CloudWatch Cost Optimization:
-//   - DEBUG logs add ~200-500MB/day (not recommended for production)
-//   - INFO logs add ~10-50MB/day (typical production setting)
-//   - WARN logs add ~1-10MB/day (minimal, errors only)
-//   - VERBOSE logs add detailed metrics for 24h analysis (useful for troubleshooting)
-//
-// Configuration Methods:
-//  1. Environment variable (recommended): export LOG_LEVEL=INFO
-//  2. At runtime: utilities.SetLogLevel("DEBUG")
-//  3. Config file: parse and call SetLogLevel()
-//
-// Recommended Settings by Environment:
-//   - Local Development: DEBUG (detailed troubleshooting)
-//   - AWS Dev/Staging: INFO (balanced logging + performance)
-//   - AWS Production: WARN (minimal costs, errors only)
-//   - During Incident: Temporarily increase to DEBUG via AWS Systems Manager
-//
-// CloudWatch Integration:
-//   - Log level change is NOT automatically logged (to prevent recursion)
-//   - Set level before starting services in main.go
-//   - Cannot be changed dynamically after startup (requires restart)
-//   - Alarms triggered by log errors still work regardless of log level
-//
-// Example:
-//
-//	func init() {
-//	  // Read from environment, defaults to INFO
-//	  utilities.SetLogLevel(os.Getenv("LOG_LEVEL"))
-//	}
-func SetLogLevel(levelStr string) {
-	level := strings.ToUpper(levelStr)
-	switch level {
+// SetLogLevel parses a string level name and sets the global threshold.
+// Defaults to INFO on unrecognised input. Called automatically from
+// init() via the LOG_LEVEL env var.
+func SetLogLevel(s string) {
+	switch strings.ToUpper(s) {
 	case "DEBUG":
 		CurrentLevel = DEBUG
 	case "INFO":
@@ -350,252 +99,95 @@ func SetLogLevel(levelStr string) {
 		CurrentLevel = WARN
 	case "ERROR":
 		CurrentLevel = ERROR
-	case "VVERBOSE":
-		CurrentLevel = VVERBOSE
+	case "VERBOSE":
+		CurrentLevel = VERBOSE
 	default:
 		CurrentLevel = INFO
 	}
 }
 
-func ToFloat64(v interface{}) float64 {
-	if v == nil {
-		return 0
-	}
-	switch val := v.(type) {
-	case float64:
-		return val
-	case float32:
-		return float64(val)
-	case int:
-		return float64(val)
-	case int64:
-		return float64(val)
-	case string:
-		s := strings.TrimSpace(val)
-		if s == "" || strings.EqualFold(s, "null") || strings.EqualFold(s, "none") {
-			return 0
-		}
-		f, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return 0
-		}
-		return f
-	default:
-		return 0
-	}
-}
+// RegisterErrorCallback sets a callback invoked on every ERROR log line.
+func RegisterErrorCallback(cb func(string)) { errorCallback = cb }
 
-func init() {
-	SetLogLevel(os.Getenv("LOG_LEVEL"))
-}
+// Bold wraps text with ANSI bold escapes for emphasis inside log lines.
+func Bold(text string) string { return colorBold + text + colorNoBold }
 
+// Error emits an ERROR-level log.  Visible at INFO+.
+func Error(format string, a ...interface{}) { Log(ERROR, format, a...) }
+
+// Info emits an INFO-level log.
+func Info(format string, a ...interface{}) { Log(INFO, format, a...) }
+
+// Debug emits a DEBUG-level log.  Only visible when LOG_LEVEL=DEBUG.
+func Debug(format string, a ...interface{}) { Log(DEBUG, format, a...) }
+
+// Warn emits a WARN-level log.  Only visible at WARN+.
+func Warn(format string, a ...interface{}) { Log(WARN, format, a...) }
+
+// Log is the simple single-line logger.  Prefer Logf for structured
+// operation logs; use Log for ad-hoc messages.
 func Log(level LogLevel, format string, a ...interface{}) {
 	if level < CurrentLevel {
 		return
 	}
-
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	msg := fmt.Sprintf(format, a...)
-	levelStr := getLevelStr(level)
-	color := getLevelColor(level)
-
-	if level == ERROR && errorCallback != nil {
-		errorCallback(msg)
-	}
-
-	output := fmt.Sprintf("[%s] [%s] [%s] %s", APP_NAME, timestamp, levelStr, msg)
-
-	if color != "" {
-		fmt.Printf("%s%s%s\n", color, output, colorReset)
+	line := fmt.Sprintf("[%s] [%s] [%s] %s",
+		APP_NAME, time.Now().Format("2006-01-02 15:04:05"), level.String(), msg)
+	c := levelColor(level)
+	if c != "" {
+		fmt.Printf("%s%s%s\n", c, line, colorReset)
 	} else {
-		fmt.Printf("%s\n", output)
+		fmt.Println(line)
+	}
+	if level == ERROR && errorCallback != nil {
+		errorCallback(line)
 	}
 }
 
-func Info(format string, a ...interface{})     { Log(INFO, format, a...) }
-func Debug(format string, a ...interface{})    { Log(DEBUG, format, a...) }
-func Warn(format string, a ...interface{})     { Log(WARN, format, a...) }
-func Error(format string, a ...interface{})    { Log(ERROR, format, a...) }
-func VVerbose(format string, a ...interface{}) { Log(VVERBOSE, format, a...) }
-
-// Logf is the core structured logging function that emits CloudWatch-compatible logs.
-//
-// Parameters:
-//   - component: Service component (Feed, Index, Cron, DLQ, etc.) for filtering
-//   - operation: Operation name (Insert, Fetch, Connect, etc.) for identifying what was done
-//   - level: Log level (DEBUG, INFO, WARN, ERROR, VERBOSE) - filtered by CurrentLevel
-//   - status: Operation status (START, OK, FAIL, IN_PROGRESS, WARN) for result tracking
-//   - elapsed: Operation duration - critical for performance monitoring in CloudWatch
-//   - details: Key=value pairs (e.g., "batch_count=800", "exchange=NASDAQ") for context
-//
-// CloudWatch Integration:
-//   - Automatic timestamp in MYT timezone format
-//   - Goroutine correlation via sequential TASK-### IDs
-//   - Memory tracking (MB) for memory leak detection
-//   - Elapsed time for performance optimization (μs, ms, s)
-//   - Component:Operation hierarchy for CloudWatch filtering
-//
-// CloudWatch Logs Insights Usage:
-//   - Filter by component: Component:Operation
-//   - Filter by status: Status=OK | Status=FAIL
-//   - Filter by performance: Elapsed: [1-9]s
-//   - Aggregate: stats count() by Component
-//   - Timeline: sort by @timestamp
-//
-// Example:
-//
-//	Logf("Feed", "Insert", INFO, "OK", elapsed,
-//	  "batch_count=800", "exchange=NASDAQ", "inserted_at=2026-05-22T15:30:46Z")
-//
-// Output:
-//
-//	[IdentityCardOCRService@20260522:15:30:46MYT]::INFO:: (Feed:Insert>>TASK-042::InsertRawPriceDataBatch)Status=OK, Type=ACTION, Memory=145.23MB, Routine=TASK-042, Elapsed: 12.45ms, batch_count=800, exchange=NASDAQ, inserted_at=2026-05-22T15:30:46Z
-func formatElapsed(elapsed time.Duration) string {
-	if elapsed.Microseconds() > 0 {
-		if elapsed.Microseconds() < 1000 {
-			return fmt.Sprintf("%.2fμs", float64(elapsed.Microseconds()))
-		} else if elapsed.Milliseconds() < 1000 {
-			return fmt.Sprintf("%.2fms", float64(elapsed.Milliseconds()))
-		}
-		return fmt.Sprintf("%.2fs", elapsed.Seconds())
-	}
-	return "0μs"
-}
-
+// Logf emits a structured block log entry with standard fields (Status,
+// Type, Memory, Routine, Elapsed) followed by caller-supplied key=value
+// details.  This is the primary log function for operations.
 func Logf(component, operation string, level LogLevel, status string, elapsed time.Duration, details ...string) {
 	if level < CurrentLevel {
 		return
 	}
+	id := nextTaskID()
+	funcName := callerName(3)
+	heapMB := heapAllocMB()
 
-	goroutineID := getGoroutineID()
-	function := getCallerFunc(3)
-	heapMB := getMemStats()
-
-	header := formatHeader(level, component, operation, goroutineID, function)
-	elapsedStr := formatElapsed(elapsed)
+	header := fmt.Sprintf("[%s@%s]::%s:: (%s:%s>>%s::%s)",
+		APP_NAME, nowCompact(), level.String(), component, operation, id, funcName)
 
 	rows := [][]string{
 		{"Status", status},
 		{"Type", "ACTION"},
 		{"Memory", fmt.Sprintf("%.2fMB", heapMB)},
-		{"Routine", goroutineID},
-		{"Elapsed", elapsedStr},
+		{"Routine", id},
+		{"Elapsed", fmtElapsed(elapsed)},
 	}
-
 	for _, d := range details {
-		parts := strings.SplitN(d, "=", 2)
-		if len(parts) == 2 {
-			rows = append(rows, []string{strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])})
+		k, v, ok := strings.Cut(d, "=")
+		if ok {
+			rows = append(rows, []string{strings.TrimSpace(k), strings.TrimSpace(v)})
 		} else {
 			rows = append(rows, []string{d, ""})
 		}
 	}
 
-	color := getLevelColor(level)
-	output := buildLogBlock(header, color, rows)
-	fmt.Print(output)
+	c := levelColor(level)
+	fmt.Print(buildBlock(header, c, rows))
 
 	if level == ERROR && errorCallback != nil {
-		errorCallback(output)
+		errorCallback(header + " " + status)
 	}
 }
 
-// LogStart emits an INFO-level log indicating operation start.
-// Used at the beginning of any operation to mark the start in CloudWatch.
-// Status=START helps identify operation initiation vs completion.
-//
-// CloudWatch Usage:
-//   - Find all operation starts: Status=START
-//   - Correlate with LogSuccess/LogError to track operation lifecycle
-//   - Measure time between START and success/failure
-func LogStart(component, operation string) {
-	Logf(component, operation, INFO, "START", 0)
-}
-
-// LogSuccess emits an INFO-level log indicating successful operation completion.
-// Includes elapsed time for performance tracking and analysis.
-// Status=OK indicates successful completion.
-//
-// CloudWatch Usage:
-//   - Find all successful operations: Status=OK
-//   - Calculate success rate: count(Status=OK) / count(Status=START)
-//   - Track performance: avg(Elapsed), max(Elapsed), min(Elapsed) by Component
-//   - Identify slow operations: Elapsed: [1-9]s
-//
-// Example:
-//
-//	start := time.Now()
-//	// ... do work ...
-//	LogSuccess("Feed", "Insert", time.Since(start), "batch_count=800")
-func LogSuccess(component, operation string, elapsed time.Duration, details ...string) {
-	Logf(component, operation, INFO, "OK", elapsed, details...)
-}
-
-// LogError emits an ERROR-level log indicating operation failure.
-// Automatically includes error message and elapsed time.
-// Status=FAIL triggers CloudWatch alarms and error tracking.
-//
-// CloudWatch Integration:
-//   - Triggers CloudWatch Alarms when ErrorCount metric exceeds threshold
-//   - Appears in error dashboards and alerts
-//   - Tracks error frequency per component for trend analysis
-//   - Enables automatic incident detection
-//
-// Example:
-//
-//	if err != nil {
-//	  LogError("Feed", "Insert", err, time.Since(start), "batch_count=800")
-//	  return err
-//	}
-//
-// CloudWatch Insights Query:
-//
-//	fields @timestamp, Component, Error | filter Status=FAIL | stats count() by Component
-func LogError(component, operation string, err error, elapsed time.Duration, details ...string) {
-	errDetail := fmt.Sprintf("Error=%s", err.Error())
-	allDetails := append([]string{errDetail}, details...)
-	Logf(component, operation, ERROR, "FAIL", elapsed, allDetails...)
-}
-
-// LogWarn emits a WARN-level log for non-critical issues (retries, degraded mode, etc.).
-// Status=WARN helps distinguish from errors while still indicating problems.
-// Used for recoverable issues that don't stop operation but affect performance.
-//
-// CloudWatch Usage:
-//   - Monitor degradation: count(Status=WARN) / count(Status=OK)
-//   - Track retry frequency: Warn=.*retry.*
-//   - Identify bottlenecks: component with high WARN count
-//
-// Example:
-//
-//	if connectionLost {
-//	  LogWarn("Feed", "Connect", "reconnecting", 0, "attempt=3/5")
-//	}
-func LogWarn(component, operation string, msg string, elapsed time.Duration, details ...string) {
-	warnDetail := fmt.Sprintf("Warn=%s", msg)
-	allDetails := append([]string{warnDetail}, details...)
-	Logf(component, operation, WARN, "WARN", elapsed, allDetails...)
-}
-
-// LogProgress emits an INFO-level log for in-progress operations.
-// Status=IN_PROGRESS allows tracking of long-running operations.
-// Used in loops or polling to indicate ongoing work without completion.
-//
-// CloudWatch Usage:
-//   - Monitor stalled operations: IN_PROGRESS logs older than 5 minutes
-//   - Track operation phases: multiple IN_PROGRESS entries per operation
-//   - Identify operations that never complete: IN_PROGRESS without OK/FAIL
-//
-// Example:
-//
-//	for i, batch := range batches {
-//	  LogProgress("Feed", "Flush", fmt.Sprintf("processing_batch_%d_%d", i, len(batch)), "batch_size=100")
-//	  // ... process batch ...
-//	}
-func LogProgress(component, operation string, msg string, details ...string) {
+// LogProgress emits an INFO-level IN_PROGRESS log for intermediate
+// checkpoints (startup phases, long-running steps, etc.).
+func LogProgress(component, operation, msg string, details ...string) {
 	resolved := msg
 	if strings.Contains(msg, "%") && len(details) > 0 {
-		verbCount := strings.Count(msg, "%s") + strings.Count(msg, "%d") + strings.Count(msg, "%v") + strings.Count(msg, "%f")
+		verbCount := strings.Count(msg, "%s") + strings.Count(msg, "%d") + strings.Count(msg, "%v")
 		if verbCount > 0 && verbCount <= len(details) {
 			args := make([]interface{}, verbCount)
 			for i := 0; i < verbCount; i++ {
@@ -605,168 +197,147 @@ func LogProgress(component, operation string, msg string, details ...string) {
 			details = details[verbCount:]
 		}
 	}
-	progressDetail := fmt.Sprintf("Progress=%s", resolved)
-	allDetails := append([]string{progressDetail}, details...)
-	Logf(component, operation, INFO, "IN_PROGRESS", 0, allDetails...)
+	all := append([]string{"Progress=" + resolved}, details...)
+	Logf(component, operation, INFO, "IN_PROGRESS", 0, all...)
 }
 
-func LogStatus(update StatusUpdate) {
-	if update.CreatedAt == "" {
-		update.CreatedAt = time.Now().Format(time.RFC3339)
-	}
-
-	goroutineID := getGoroutineID()
-	function := getCallerFunc(3)
-	heapMB := getMemStats()
-
-	header := formatHeader(INFO, "Feed", "Insert", goroutineID, function)
-
-	rows := [][]string{
-		{"Status", "OK"},
-		{"Type", "DATA"},
-		{"Memory", fmt.Sprintf("%.2fMB", heapMB)},
-		{"Routine", goroutineID},
-	}
-
-	if update.StockNo != "" {
-		rows = append(rows,
-			[]string{"Stock", update.StockNo},
-			[]string{"Price", fmt.Sprintf("%.4f", update.LastPrice)},
-			[]string{"Vol", fmt.Sprintf("%.0f", update.Volume)},
-			[]string{"Seq", update.SequenceNumber},
-		)
-	}
-	rows = append(rows, []string{"Msg", update.Message})
-
-	output := buildLogBlock(header, colorBlue, rows)
-	fmt.Print(output)
-
-	statusMutex.RLock()
-	defer statusMutex.RUnlock()
-	for _, cb := range statusCallbacks {
-		if cb != nil {
-			go cb(update)
-		}
-	}
+// LogStart emits a START marker for an operation.
+func LogStart(component, operation string) {
+	Logf(component, operation, INFO, "START", 0)
 }
 
-func GetEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
+// LogSuccess emits an OK marker with elapsed time.
+func LogSuccess(component, operation string, elapsed time.Duration, details ...string) {
+	Logf(component, operation, INFO, "OK", elapsed, details...)
 }
 
-// Mask redacts sensitive data in logs for CloudWatch data protection.
-// Complies with GDPR, HIPAA, and other data protection regulations.
-//
-// CloudWatch Data Protection Features (AWS):
-//   - Automatic redaction of PII (personally identifiable information)
-//   - Custom data identifier rules for domain-specific sensitive data
-//   - Log group-level masking policies
-//   - Audit trail of masked data attempts (optional)
-//
-// Usage Examples:
-//   - API Keys: Mask(apiKey) → "secret_a[REDACTED]"
-//   - Passwords: Mask(password) → "pass[REDACTED]"
-//   - Tokens: Mask(bearerToken) → "eyJhbG[REDACTED]"
-//
-// Masking Pattern:
-//   - Shows first 10 characters (or 1/3 of short strings)
-//   - Appends [REDACTED] to indicate intentional masking
-//   - Enough information for debugging without exposing secrets
-//
-// Example in logs:
-//
-//	LogSuccess("Auth", "Authenticate", elapsed, fmt.Sprintf("token=%s", Mask(token)))
-//	// Output: token=eyJhbGc[REDACTED]
-//
-// CloudWatch Integration:
-//   - Works with CloudWatch Data Protection feature
-//   - Enables compliance reporting for regulatory audits
-//   - Reduces GDPR/CCPA data access risks
+// LogError emits a FAIL marker with the error message.
+func LogError(component, operation string, err error, elapsed time.Duration, details ...string) {
+	all := append([]string{"Error=" + err.Error()}, details...)
+	Logf(component, operation, ERROR, "FAIL", elapsed, all...)
+}
+
+// LogWarn emits a WARN marker.
+func LogWarn(component, operation, msg string, elapsed time.Duration, details ...string) {
+	all := append([]string{"Warn=" + msg}, details...)
+	Logf(component, operation, WARN, "WARN", elapsed, all...)
+}
+
+// Mask redacts a sensitive value, showing the first few characters
+// followed by [REDACTED].  Useful for tokens, keys, and PII in logs.
 func Mask(s string) string {
 	runes := []rune(s)
-	n := len(runes)
-
-	if n <= 4 {
+	if len(runes) <= 4 {
 		return "****"
 	}
-
-	showCount := 10
-	if n <= showCount {
-		showCount = n / 3
+	n := 10
+	if len(runes) <= n {
+		n = len(runes) / 3
 	}
-
-	return string(runes[:showCount]) + "[REDACTED]"
+	return string(runes[:n]) + "[REDACTED]"
 }
 
-// CheckCUrrentMemory emits a system health snapshot to CloudWatch.
-// Called periodically (e.g., every 5 minutes) to monitor application health.
-//
-// Metrics collected:
-//   - Heap: Current heap allocation (MB) - tracks memory growth
-//   - Alloc: Total allocated memory (MB) - includes freed but not returned to OS
-//   - Sys: System memory (MB) - all memory reserved from OS
-//   - Routines: Number of active goroutines - detects goroutine leaks
-//   - Uptime: Time since application started - for correlation with restarts
-//
-// CloudWatch Dashboard Metrics:
-//   - Memory trend: heap memory over time (early detection of leaks)
-//   - Goroutine leak: increasing Routines without corresponding log activity
-//   - System health: Sys growing unbounded indicates memory fragmentation
-//   - Uptime tracking: frequency of restarts indicates stability issues
-//
-// Alarm Thresholds:
-//   - Alert if Routines > 2000 (goroutine leak)
-//   - Alert if Heap > 1000MB (memory pressure)
-//   - Alert if Uptime < 1h (frequent restarts)
-//
-// CloudWatch Logs Insights Usage:
-//
-//	fields Heap, Alloc, Routines, Uptime | filter Component="App" | sort @timestamp desc
-//
-// Memory leak detection query:
-//
-//	fields Heap | filter Component="App" | stats max(Heap) as max_heap by bin(1h) | sort max_heap desc
-func CheckCUrrentMemory() string {
+// RetryWithBackoff executes an operation up to maxAttempts times with a
+// fixed backoff between attempts. Returns the last error on exhaustion.
+func RetryWithBackoff(name string, maxAttempts int, backoff time.Duration, fn func() error) error {
+	var last error
+	for i := 0; i < maxAttempts; i++ {
+		if err := fn(); err == nil {
+			return nil
+		} else {
+			last = err
+			Warn("%s attempt %d/%d failed: %v — retrying in %v", name, i+1, maxAttempts, err, backoff)
+			time.Sleep(backoff)
+		}
+	}
+	return fmt.Errorf("%s: exhausted %d retries: %w", name, maxAttempts, last)
+}
+
+// ── Internal helpers ───────────────────────────────────────────────
+
+func init() { SetLogLevel(os.Getenv("LOG_LEVEL")) }
+
+func levelColor(l LogLevel) string {
+	switch l {
+	case DEBUG:
+		return colorYellow
+	case INFO:
+		return colorBlue
+	case WARN:
+		return colorPink
+	case ERROR:
+		return colorRed
+	case VERBOSE:
+		return colorGreen
+	default:
+		return ""
+	}
+}
+
+func nowCompact() string {
+	t := time.Now()
+	return fmt.Sprintf("%d%02d%02d:%02d:%02d:%02d%s",
+		t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), TZ)
+}
+
+func nextTaskID() string {
+	goroutineMu.Lock()
+	id := goroutineSeq
+	goroutineSeq++
+	goroutineMu.Unlock()
+	return fmt.Sprintf("TASK-%03d", id)
+}
+
+func callerName(depth int) string {
+	pc, _, _, ok := runtime.Caller(depth)
+	if !ok {
+		return "Unknown"
+	}
+	name := runtime.FuncForPC(pc).Name()
+	if i := strings.LastIndexByte(name, '.'); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+func heapAllocMB() float64 {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-
-	toMB := func(bytes uint64) float64 {
-		return float64(bytes) / 1024 / 1024
-	}
-
-	uptime := time.Since(startTime).Round(time.Second)
-	numGoroutine := runtime.NumGoroutine()
-
-	header := fmt.Sprintf("[%s@%s]::INFO:: (App:State>>System::CheckMemory)", APP_NAME, formatTimestamp())
-	rows := [][]string{
-		{"Status", "OK"},
-		{"Heap", fmt.Sprintf("%.2fMB", toMB(m.Alloc))},
-		{"Alloc", fmt.Sprintf("%.2fMB", toMB(m.TotalAlloc))},
-		{"Sys", fmt.Sprintf("%.2fMB", toMB(m.Sys))},
-		{"Routines", fmt.Sprintf("%d", numGoroutine)},
-		{"Uptime", uptime.String()},
-	}
-
-	status := buildLogBlock(header, colorBlue, rows)
-	fmt.Print(status)
-	return status
+	return float64(m.Alloc) / 1024 / 1024
 }
 
-func RetryWithBackoff(operationName string, maxAttempts int, backoffDuration time.Duration, operation func() error) error {
-	var lastError error
-
-	for attemptIndex := 0; attemptIndex < maxAttempts; attemptIndex++ {
-		operationError := operation()
-		if operationError == nil {
-			return nil
-		}
-		lastError = operationError
-		Log(WARN, "%s attempt %d/%d failed: %v. Retrying in %v...", operationName, attemptIndex+1, maxAttempts, operationError, backoffDuration)
-		time.Sleep(backoffDuration)
+func fmtElapsed(d time.Duration) string {
+	switch {
+	case d == 0:
+		return "0μs"
+	case d < time.Microsecond:
+		return fmt.Sprintf("%.2fμs", float64(d.Nanoseconds())/1000.0)
+	case d < time.Millisecond:
+		return fmt.Sprintf("%.2fμs", float64(d.Microseconds()))
+	case d < time.Second:
+		return fmt.Sprintf("%.2fms", float64(d.Milliseconds()))
+	default:
+		return fmt.Sprintf("%.2fs", d.Seconds())
 	}
+}
 
-	return fmt.Errorf("%s exhausted %d retries: %w", operationName, maxAttempts, lastError)
+func buildBlock(header, color string, rows [][]string) string {
+	var sb strings.Builder
+	keyW := 0
+	for _, r := range rows {
+		if len(r) == 2 && len(r[0]) > keyW {
+			keyW = len(r[0])
+		}
+	}
+	sb.WriteString(color)
+	sb.WriteString(colorBold)
+	sb.WriteString(header)
+	sb.WriteString(colorReset)
+	sb.WriteString("\n")
+	for _, r := range rows {
+		if len(r) == 2 {
+			fmt.Fprintf(&sb, "%s  | %-*s : %s%s\n", color, keyW, r[0], r[1], colorReset)
+		}
+	}
+	return sb.String()
 }
