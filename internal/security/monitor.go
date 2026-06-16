@@ -14,10 +14,10 @@ import (
 type ThreatSeverity int
 
 const (
-	SeverityLow    ThreatSeverity = iota // informational (unusual but not malicious)
-	SeverityMedium                       // suspicious pattern, worth reviewing
-	SeverityHigh                         // likely attack, escalate immediately
-	SeverityCritical                     // confirmed exploit pattern
+	SeverityLow      ThreatSeverity = iota // informational (unusual but not malicious)
+	SeverityMedium                         // suspicious pattern, worth reviewing
+	SeverityHigh                           // likely attack, escalate immediately
+	SeverityCritical                       // confirmed exploit pattern
 )
 
 func (s ThreatSeverity) String() string {
@@ -37,11 +37,11 @@ func (s ThreatSeverity) String() string {
 
 // ThreatMatch describes a single detected pattern in a request.
 type ThreatMatch struct {
-	Category string        // e.g. "SQL_INJECTION", "XSS", "PATH_TRAVERSAL"
+	Category string // e.g. "SQL_INJECTION", "XSS", "PATH_TRAVERSAL"
 	Severity ThreatSeverity
-	Pattern  string        // the regex or keyword that matched
-	Location string        // "body", "path", "query", "header:X-Forwarded-For"
-	Sample   string        // redacted snippet of the matched content (max 80 chars)
+	Pattern  string // the regex or keyword that matched
+	Location string // "body", "path", "query", "header:X-Forwarded-For"
+	Sample   string // redacted snippet of the matched content (max 80 chars)
 }
 
 // patternGroup groups related detection patterns under a single category.

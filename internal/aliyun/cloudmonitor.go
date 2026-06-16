@@ -138,14 +138,14 @@ func LogVerboseRequest(method, path, srcIP, ua string, headers map[string]string
 	}
 
 	entry := map[string]interface{}{
-		"event":     "request.verbose",
-		"timestamp": time.Now().Format(time.RFC3339),
-		"method":    method,
-		"path":      path,
-		"source_ip": srcIP,
+		"event":      "request.verbose",
+		"timestamp":  time.Now().Format(time.RFC3339),
+		"method":     method,
+		"path":       path,
+		"source_ip":  srcIP,
 		"user_agent": ua,
-		"headers":   redactedHeaders,
-		"body_len":  len(body),
+		"headers":    redactedHeaders,
+		"body_len":   len(body),
 	}
 	data, _ := json.Marshal(entry)
 	fmt.Fprintln(os.Stdout, string(data))

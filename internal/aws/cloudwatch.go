@@ -125,10 +125,10 @@ func EmitSecurityMetric(matches []security.ThreatMatch) {
 			},
 		},
 		"Category":       cat,
-		"Severity":        severity.String(),
-		"ThreatDetected":  1,
-		"FunctionName":    os.Getenv("AWS_LAMBDA_FUNCTION_NAME"),
-		"MatchCount":      len(matches),
+		"Severity":       severity.String(),
+		"ThreatDetected": 1,
+		"FunctionName":   os.Getenv("AWS_LAMBDA_FUNCTION_NAME"),
+		"MatchCount":     len(matches),
 	}
 	data, _ := json.Marshal(emf)
 	fmt.Fprintln(os.Stdout, string(data))
@@ -293,14 +293,14 @@ func LogVerboseRequest(method, path, srcIP, ua string, headers map[string]string
 	}
 
 	entry := map[string]interface{}{
-		"event":     "request.verbose",
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"method":    method,
-		"path":      path,
-		"source_ip": srcIP,
+		"event":      "request.verbose",
+		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"method":     method,
+		"path":       path,
+		"source_ip":  srcIP,
 		"user_agent": ua,
-		"headers":   redactedHeaders,
-		"body_len":  len(body),
+		"headers":    redactedHeaders,
+		"body_len":   len(body),
 	}
 
 	data, _ := json.Marshal(entry)

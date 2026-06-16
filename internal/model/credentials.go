@@ -13,13 +13,13 @@ type AWSAuthorisationKeys struct {
 // AliyunAuthorisationKeys holds the credentials needed to initialise
 // an Alibaba Cloud SDK client (OSS, STS, TableStore, etc.).
 type AliyunAuthorisationKeys struct {
-	AccessKeyID       string
-	SecretAccessKey   string
-	Region            string
-	Bucket            string
-	Endpoint          string
+	AccessKeyID        string
+	SecretAccessKey    string
+	Region             string
+	Bucket             string
+	Endpoint           string
 	TableStoreInstance string
-	TableStoreTable   string
+	TableStoreTable    string
 }
 
 // KeysConfig holds the object-storage paths used to load the JWT
