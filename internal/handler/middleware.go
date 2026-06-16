@@ -1,11 +1,10 @@
 // Package handler (middleware.go) provides request-level security
 // inspection that scans every incoming request for attack patterns
 // (SQL injection, XSS, path traversal, command injection, SSRF, etc.)
-// and routes findings to the configured security log callback.
+// and tracks request rates for burst / flood detection.
 //
-// SecurityLogFunc is injected by main.go to avoid import cycles with
-// the aws/aliyun packages. In local mode it is nil and threats are
-// logged to stderr only.
+// SecurityLogFunc and RateTracker are injected by main.go to avoid
+// import cycles with the aws/aliyun packages.
 package handler
 
 import (
@@ -15,20 +14,31 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
-// SecurityLogFunc is the callback invoked when security threats are
-// detected in a request. It receives the HTTP method, path, source IP,
-// user agent, and the list of detected threat matches.
-//
-// Set by main.go to route events to CloudWatch (AWS) or CloudMonitor
-// (Aliyun). When nil (local mode), threats are logged to stderr only.
+// SecurityLogFunc receives detected threat matches for routing to the
+// active cloud monitoring backend (CloudWatch / CloudMonitor).
 var SecurityLogFunc func(method, path, srcIP, ua string, matches []security.ThreatMatch)
 
-// SecurityMiddleware wraps an http.HandlerFunc with threat detection.
-// Detected threats are logged to the active cloud platform's monitoring
-// service (CloudWatch on AWS Lambda, CloudMonitor on Aliyun FC).
-// Requests are never blocked — this is detection-only.
+// RateTracker is the global sliding-window rate monitor. Set by main.go
+// before the server starts. When nil, rate tracking is disabled.
+var RateTracker *security.RateTracker
+var rateOnce sync.Once
+
+func initRateTracker() {
+	rateOnce.Do(func() {
+		if RateTracker == nil {
+			RateTracker = security.NewRateTracker(60 * time.Second)
+		}
+	})
+}
+
+// SecurityMiddleware wraps an http.HandlerFunc with threat detection
+// and rate monitoring.  Detected threats and rate anomalies are routed
+// via SecurityLogFunc to CloudWatch (AWS) or CloudMonitor (Aliyun).
+// Requests are never blocked.
 func SecurityMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		srcIP := r.Header.Get("X-Forwarded-For")
@@ -37,7 +47,11 @@ func SecurityMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 		ua := r.UserAgent()
 
-		// Read and buffer the body so we can scan it without consuming it.
+		// ── 1. Rate tracking ──
+		initRateTracker()
+		rateMatches := RateTracker.Record(security.RateEvent{IP: srcIP, Path: r.URL.Path})
+
+		// ── 2. Body scan ──
 		bodyBytes, err := io.ReadAll(r.Body)
 		r.Body.Close()
 		if err != nil {
@@ -46,24 +60,23 @@ func SecurityMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		body := string(bodyBytes)
 		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
-		// Collect headers into a flat map.
 		headers := make(map[string]string, len(r.Header))
 		for k := range r.Header {
 			headers[k] = r.Header.Get(k)
 		}
 
-		matches := security.ScanRequest(body, r.URL.Path, r.URL.RawQuery, headers)
+		patternMatches := security.ScanRequest(body, r.URL.Path, r.URL.RawQuery, headers)
 
-		if len(matches) > 0 {
-			// Route to the active cloud platform via injected callback.
+		// ── 3. Merge & log ──
+		all := append(rateMatches, patternMatches...)
+
+		if len(all) > 0 {
 			if SecurityLogFunc != nil {
-				SecurityLogFunc(r.Method, r.URL.Path, srcIP, ua, matches)
+				SecurityLogFunc(r.Method, r.URL.Path, srcIP, ua, all)
 			}
-
-			// Always log locally so developers see it immediately.
 			utilities.LogProgress("Security",
 				r.Method+" "+r.URL.Path,
-				joinMatchSummary(matches),
+				joinMatchSummary(all),
 			)
 		}
 
@@ -71,8 +84,6 @@ func SecurityMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// joinMatchSummary builds a compact human-readable string from threat
-// matches for use in progress-log entries.
 func joinMatchSummary(matches []security.ThreatMatch) string {
 	parts := make([]string, 0, len(matches))
 	for _, m := range matches {

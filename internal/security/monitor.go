@@ -1,8 +1,3 @@
-// Package security (monitor.go) provides request-level threat detection
-// for SQL injection, XSS, path traversal, command injection, SSRF, and
-// other common attack vectors. It is designed to run in cloud runtimes
-// (AWS Lambda / Aliyun FC) and feed structured security events to
-// CloudWatch / CloudMonitor for alarming.
 package security
 
 import (
@@ -14,10 +9,10 @@ import (
 type ThreatSeverity int
 
 const (
-	SeverityLow      ThreatSeverity = iota // informational (unusual but not malicious)
-	SeverityMedium                         // suspicious pattern, worth reviewing
-	SeverityHigh                           // likely attack, escalate immediately
-	SeverityCritical                       // confirmed exploit pattern
+	SeverityLow      ThreatSeverity = iota // informational
+	SeverityMedium                         // suspicious
+	SeverityHigh                           // likely attack
+	SeverityCritical                       // confirmed exploit
 )
 
 func (s ThreatSeverity) String() string {
@@ -37,14 +32,13 @@ func (s ThreatSeverity) String() string {
 
 // ThreatMatch describes a single detected pattern in a request.
 type ThreatMatch struct {
-	Category string // e.g. "SQL_INJECTION", "XSS", "PATH_TRAVERSAL"
+	Category string // e.g. "SQL_INJECTION", "XSS"
 	Severity ThreatSeverity
-	Pattern  string // the regex or keyword that matched
-	Location string // "body", "path", "query", "header:X-Forwarded-For"
-	Sample   string // redacted snippet of the matched content (max 80 chars)
+	Pattern  string // regex that matched
+	Location string // "body", "path", "query", "header:..."
+	Sample   string // redacted snippet (max 80 chars)
 }
 
-// patternGroup groups related detection patterns under a single category.
 type patternGroup struct {
 	Category string
 	Severity ThreatSeverity
@@ -55,7 +49,7 @@ var threatPatterns []patternGroup
 
 func init() {
 	threatPatterns = []patternGroup{
-		// ── SQL Injection ──
+		// ── SQL Injection — CRITICAL ──
 		{
 			Category: "SQL_INJECTION",
 			Severity: SeverityCritical,
@@ -75,7 +69,7 @@ func init() {
 				regexp.MustCompile(`(?i)(\bEXEC\s+sp_|\bxp_cmdshell\b)`),
 			},
 		},
-		// ── XSS / HTML Injection ──
+		// ── XSS — HIGH ──
 		{
 			Category: "XSS",
 			Severity: SeverityHigh,
@@ -89,10 +83,9 @@ func init() {
 				regexp.MustCompile(`(?i)(document\.cookie)`),
 				regexp.MustCompile(`(?i)(<iframe[^>]*>)`),
 				regexp.MustCompile(`(?i)(eval\s*\(.*\))`),
-				regexp.MustCompile(`(?i)(expression\s*\(|moz-binding)`),
 			},
 		},
-		// ── Path Traversal ──
+		// ── Path Traversal — HIGH ──
 		{
 			Category: "PATH_TRAVERSAL",
 			Severity: SeverityHigh,
@@ -106,7 +99,7 @@ func init() {
 				regexp.MustCompile(`(file:///(etc|proc|sys|dev))`),
 			},
 		},
-		// ── Command Injection ──
+		// ── Command Injection — CRITICAL ──
 		{
 			Category: "COMMAND_INJECTION",
 			Severity: SeverityCritical,
@@ -114,13 +107,12 @@ func init() {
 				regexp.MustCompile(`(?i)(;\s*(cat|ls|id|whoami|uname|wget|curl|nc|bash|sh|python|perl)\b)`),
 				regexp.MustCompile(`(?i)(\|\s*(cat|ls|id|whoami|wget|curl|nc)\b)`),
 				regexp.MustCompile(`(?i)(\$\{.*\})`),
-				regexp.MustCompile(`(?i)(\b(cmd|command)\s*=\s*['"](/bin|/usr|C:\\))`),
 				regexp.MustCompile("(?i)(`[^`]*`)"),
 				regexp.MustCompile(`(?i)(\$\(.*\))`),
 				regexp.MustCompile(`(?i)(&&\s*(wget|curl|nc|ncat|telnet|bash|sh)\b)`),
 			},
 		},
-		// ── SSRF ──
+		// ── SSRF — HIGH ──
 		{
 			Category: "SSRF",
 			Severity: SeverityHigh,
@@ -133,7 +125,7 @@ func init() {
 				regexp.MustCompile(`(?i)(/latest/meta-data/)`),
 			},
 		},
-		// ── LFI / RFI ──
+		// ── LFI / RFI — HIGH ──
 		{
 			Category: "FILE_INCLUSION",
 			Severity: SeverityHigh,
@@ -144,7 +136,7 @@ func init() {
 				regexp.MustCompile(`(?i)(\.(ini|cfg|config|bak|old|swp|sql)(\?|%00|\x00|$))`),
 			},
 		},
-		// ── NoSQL Injection ──
+		// ── NoSQL Injection — HIGH ──
 		{
 			Category: "NOSQL_INJECTION",
 			Severity: SeverityHigh,
@@ -153,7 +145,75 @@ func init() {
 				regexp.MustCompile(`(?i)(\{.*\$where.*\})`),
 			},
 		},
-		// ── HTTP Header Injection ──
+		// ── Sensitive File Probing — HIGH ──
+		{
+			Category: "SENSITIVE_FILE",
+			Severity: SeverityHigh,
+			Patterns: []*regexp.Regexp{
+				regexp.MustCompile(`(?i)(/\.env\b)`),
+				regexp.MustCompile(`(?i)(/\.git/)`),
+				regexp.MustCompile(`(?i)(/\.svn/)`),
+				regexp.MustCompile(`(?i)(/\.hg/)`),
+				regexp.MustCompile(`(?i)(/\.docker/)`),
+				regexp.MustCompile(`(?i)(/\.aws/)`),
+				regexp.MustCompile(`(?i)(\.env\.(backup|bak|old|local|production|staging|dev))`),
+				regexp.MustCompile(`(?i)(/(config|configuration)\.(json|yml|yaml|xml|ini|toml|php))`),
+				regexp.MustCompile(`(?i)(/(settings|secrets|credentials)\.(json|yml|yaml|xml))`),
+				regexp.MustCompile(`(?i)(/(docker-compose|Dockerfile|Makefile|Vagrantfile)\b)`),
+				regexp.MustCompile(`(?i)(/(id_rsa|id_dsa|id_ecdsa|known_hosts))`),
+				regexp.MustCompile(`(?i)(/\.kube/)`),
+				regexp.MustCompile(`(?i)(/(web\.config|app\.config|package\.json|composer\.json))`),
+				regexp.MustCompile(`(?i)(/\.bash_history|/\.zsh_history|/\.mysql_history)`),
+				regexp.MustCompile(`(?i)(/phpinfo\.php|/info\.php|/test\.php)`),
+				regexp.MustCompile(`(?i)(/(phpmyadmin|phpMyAdmin|pma|mysql|adminer)\b)`),
+			},
+		},
+		// ── Directory Brute-force — MEDIUM ──
+		{
+			Category: "DIR_BRUTE_FORCE",
+			Severity: SeverityMedium,
+			Patterns: []*regexp.Regexp{
+				regexp.MustCompile(`(?i)(/(admin|administrator|backend|cms|panel|manager|dashboard)\b)`),
+				regexp.MustCompile(`(?i)(/(wp-login|wp-admin|xmlrpc)\.php)`),
+				regexp.MustCompile(`(?i)(/(api|graphql|swagger|openapi|docs|rest)(/|$))`),
+				regexp.MustCompile(`(?i)(/(\.well-known|actuator|health|info|metrics|trace|mappings|dump|heapdump|env|beans|loggers|logfile)(/|$))`),
+				regexp.MustCompile(`(?i)(/(solr|jenkins|grafana|kibana|prometheus|consul|etcd|vault)(/|$))`),
+				regexp.MustCompile(`(?i)(/(console|shell|cmd|exec|terminal|debug|trace)(/|$))`),
+				regexp.MustCompile(`(?i)(/(api/v\d+/|api-docs|openapi\.json|swagger\.json))`),
+				regexp.MustCompile(`(?i)(/(\.vscode|\.idea)/)`),
+				regexp.MustCompile(`(?i)(/(backup|uploads?|tmp|temp|cache|log|logs)(/|$))`),
+			},
+		},
+		// ── CSRF / Cross-Origin — MEDIUM ──
+		{
+			Category: "CROSS_ORIGIN",
+			Severity: SeverityMedium,
+			Patterns: []*regexp.Regexp{
+				regexp.MustCompile(`(?i)(<form[^>]*action\s*=\s*['"]https?://)`),
+				regexp.MustCompile(`(?i)(<input[^>]*name\s*=\s*['"]_?(csrftoken|csrfmiddlewaretoken|authenticity_token|nonce)`),
+				regexp.MustCompile(`(?i)(\bcross-origin\b.*\b(blocked|denied|forbidden)\b)`),
+			},
+		},
+		// ── Excessive Request Parameters — LOW ──
+		{
+			Category: "EXCESSIVE_PARAMS",
+			Severity: SeverityLow,
+			Patterns: []*regexp.Regexp{
+				regexp.MustCompile(`&[a-zA-Z0-9_]+=`),
+			},
+		},
+		// ── XML Injection / XXE — HIGH ──
+		{
+			Category: "XML_ATTACK",
+			Severity: SeverityHigh,
+			Patterns: []*regexp.Regexp{
+				regexp.MustCompile(`(?i)(<!ENTITY\s+\w+\s+SYSTEM)`),
+				regexp.MustCompile(`(?i)(<!DOCTYPE[^>]*\[)`),
+				regexp.MustCompile(`(?i)(<\?xml[^>]*encoding\s*=)`),
+				regexp.MustCompile(`(?i)(<![CDATA\[)`),
+			},
+		},
+		// ── HTTP Header Injection — MEDIUM ──
 		{
 			Category: "HEADER_INJECTION",
 			Severity: SeverityMedium,
@@ -162,12 +222,28 @@ func init() {
 				regexp.MustCompile(`(?i)(\r\n.*(Location|Set-Cookie|X-Forwarded)\s*:)`),
 			},
 		},
+		// ── Method Tampering — LOW ──
+		{
+			Category: "METHOD_TAMPERING",
+			Severity: SeverityLow,
+			Patterns: []*regexp.Regexp{
+				regexp.MustCompile(`(?i)(X-HTTP-Method-Override\s*:)`),
+				regexp.MustCompile(`(?i)(_method\s*=\s*(PUT|DELETE|PATCH))`),
+			},
+		},
+		// ── User-Agent Scanner — LOW ──
+		{
+			Category: "SCANNER_UA",
+			Severity: SeverityLow,
+			Patterns: []*regexp.Regexp{
+				regexp.MustCompile(`(?i)((nikto|nessus|nmap|sqlmap|burp|zap|w3af|acunetix|openvas|gobuster|dirbuster|hydra|metasploit|masscan))`),
+			},
+		},
 	}
 }
 
-// ScanRequest inspects a request body, URL path, query string, and headers
-// for known attack patterns. Returns all matches found, ordered by severity
-// (critical first). An empty slice means the request is clean.
+// ScanRequest inspects a request body, URL path, query string, and
+// headers for known attack patterns.
 func ScanRequest(body, path, query string, headers map[string]string) []ThreatMatch {
 	var matches []ThreatMatch
 
@@ -203,7 +279,6 @@ func ScanRequest(body, path, query string, headers map[string]string) []ThreatMa
 }
 
 // HighestSeverity returns the highest severity among the given matches.
-// Returns SeverityLow if the slice is empty.
 func HighestSeverity(matches []ThreatMatch) ThreatSeverity {
 	max := SeverityLow
 	for _, m := range matches {
@@ -214,8 +289,6 @@ func HighestSeverity(matches []ThreatMatch) ThreatSeverity {
 	return max
 }
 
-// safeSample returns a redacted substring starting at index, capped at
-// maxLen characters. Newlines and tabs are replaced with spaces.
 func safeSample(s string, start, maxLen int) string {
 	if start >= len(s) {
 		return ""
