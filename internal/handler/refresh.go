@@ -10,11 +10,26 @@ import (
 	jwtlib "github.com/golang-jwt/jwt/v5"
 )
 
-// Refresh validates the refresh token, checks its scope and expiry, then
-// issues a new access token bound to the client IP and User-Agent.
+// Refresh validates a refresh token against the RS256 public key, checks that
+// it carries the "token:refresh" scope, verifies it has not been revoked via
+// the token blacklist, and issues a new access and refresh token pair.
+//
+// Parameters:
+//   - refreshTokenStr: the compact JWS refresh token string.
+//   - ip: the client IP address for the new token binding.
+//   - ua: the client User-Agent for the new token binding.
+//
+// Returns:
+//   - model.JwtResponse: the newly issued token pair.
+//   - error: nil on success; "token has been revoked", "invalid or expired
+//     refresh token", or scope/key errors otherwise.
 func Refresh(refreshTokenStr, ip, ua string) (model.JwtResponse, error) {
 	if refreshTokenStr == "" {
 		return model.JwtResponse{}, errors.New("refresh token is required")
+	}
+
+	if IsTokenRevoked(refreshTokenStr) {
+		return model.JwtResponse{}, errors.New("token has been revoked")
 	}
 
 	if model.PublicKey == nil {
@@ -69,8 +84,7 @@ func Refresh(refreshTokenStr, ip, ua string) (model.JwtResponse, error) {
 		return model.JwtResponse{}, fmt.Errorf("failed to sign refresh token: %w", err)
 	}
 
-	utilities.LogProgress("handler", "Refresh",
-		fmt.Sprintf("user=%s", subject))
+	utilities.LogProgress("handler", "Refresh", fmt.Sprintf("user=%s", subject))
 
 	return model.JwtResponse{
 		AccessToken:  accessTokenStr,
@@ -85,8 +99,18 @@ func Refresh(refreshTokenStr, ip, ua string) (model.JwtResponse, error) {
 	}, nil
 }
 
-// ValidateAccessToken parses and validates an access token, returning its
-// subject on success. Used by middleware and protected endpoints.
+// ValidateAccessToken parses and validates an RS256-signed access token
+// against the configured public key. It checks the token has not been revoked
+// (blacklist) and returns the embedded subject claim.
+//
+// Parameters:
+//   - accessTokenStr: the compact JWS token string, optionally with "Bearer "
+//     prefix.
+//
+// Returns:
+//   - string: the subject claim (username) from the token.
+//   - error: nil on success; "token has been revoked", "invalid or expired
+//     access token", or key errors otherwise.
 func ValidateAccessToken(accessTokenStr string) (string, error) {
 	if accessTokenStr == "" {
 		return "", errors.New("access token is required")
@@ -95,6 +119,10 @@ func ValidateAccessToken(accessTokenStr string) (string, error) {
 	tokenStr := accessTokenStr
 	if strings.HasPrefix(tokenStr, "Bearer ") {
 		tokenStr = tokenStr[7:]
+	}
+
+	if IsTokenRevoked(tokenStr) {
+		return "", errors.New("token has been revoked")
 	}
 
 	if model.PublicKey == nil {

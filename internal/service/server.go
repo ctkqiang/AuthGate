@@ -1,9 +1,12 @@
-// Package service (server.go) provides the unified local HTTP server and
-// the shared route table consumed by all cloud-runtime adapters.
+// Package service provides the unified local HTTP server and the shared route
+// table consumed by all cloud-runtime adapters (AWS Lambda, Alibaba Cloud FC).
 //
-// Every environment — local development, AWS Lambda, Aliyun FC — uses the
-// single [Routes] slice so that adding or changing an endpoint in one place
-// takes effect everywhere.
+// Every environment uses the single Routes slice so that adding or changing an
+// endpoint in one place takes effect everywhere without per-runtime boilerplate.
+//
+// Route matching supports exact-match and prefix-match (for parameterised
+// routes like /auth/provider/google). MatchRoute is the public entry point
+// used by the Lambda and FC adapters.
 package service
 
 import (
@@ -18,32 +21,39 @@ import (
 	"syscall"
 )
 
-// RouteEntry pairs a URL path with its handler function.  The [Routes]
-// slice is the single source of truth for all runtime adapters.
-//
-// When Prefix is true the path is matched as a prefix (for parameterised
-// routes like /auth/provider/google).
+// RouteEntry pairs a URL path with its HTTP handler function. When Prefix is
+// true, the path is matched as a prefix rather than exact match.
 type RouteEntry struct {
 	Path    string
 	Prefix  bool
 	Handler http.HandlerFunc
 }
 
-// Routes is the shared route table used by the local server, AWS Lambda
-// handler, and Aliyun FC handler.  Add new endpoints here to make them
-// available in every environment.
+// Routes is the canonical route table — the single source of truth for all
+// three runtime environments. Add new endpoints here to make them available
+// in local, AWS Lambda, and Alibaba Cloud FC modes.
 var Routes = []RouteEntry{
 	{Path: config.IndexPath, Handler: handler.Index},
 	{Path: config.HealthPath, Handler: handler.Health},
+	{Path: "/metrics", Handler: handler.Metrics},
 	{Path: config.AuthRegister, Handler: handler.AuthRegister},
 	{Path: config.AuthLogin, Handler: handler.AuthLogin},
 	{Path: config.AuthLogout, Handler: handler.AuthLogout},
 	{Path: config.AuthRefresh, Handler: handler.AuthRefresh},
+	{Path: "/auth/verify", Handler: handler.AuthVerifyEmail},
+	{Path: "/auth/forgot-password", Handler: handler.AuthForgotPassword},
+	{Path: "/auth/reset-password", Handler: handler.AuthResetPassword},
 	{Path: "/auth/provider/", Prefix: true, Handler: handler.AuthWithProvider},
 }
 
-// MatchRoute finds the first route whose path matches the request URL.
-// Routes with Prefix=true use prefix matching; all others use exact match.
+// MatchRoute finds the first route whose path matches the request URL. Routes
+// with Prefix=true use strings.HasPrefix; all others use exact equality.
+//
+// Parameters:
+//   - path: the request URL path to match.
+//
+// Returns:
+//   - http.HandlerFunc: the matching handler, or nil if no route matches.
 func MatchRoute(path string) http.HandlerFunc {
 	for _, entry := range Routes {
 		if entry.Prefix {
@@ -59,22 +69,24 @@ func MatchRoute(path string) http.HandlerFunc {
 	return nil
 }
 
-// IsLocalMode reports whether none of the supported cloud runtimes
-// are detected, meaning we should start the local development server.
+// IsLocalMode reports whether none of the supported cloud runtimes are
+// detected, meaning the local development HTTP server should start.
+//
+// Returns:
+//   - bool: true when neither AWS Lambda nor Alibaba Cloud FC runtime
+//     environment variables are present.
 func IsLocalMode() bool {
 	_, lambdaPort := os.LookupEnv("_LAMBDA_SERVER_PORT")
 	_, lambdaAPI := os.LookupEnv("AWS_LAMBDA_RUNTIME_API")
 	_, fcFunc := os.LookupEnv("FC_FUNCTION_NAME")
-
 	onAWS := lambdaPort && lambdaAPI
 	onAliyun := fcFunc
-
 	return !onAWS && !onAliyun
 }
 
-// StartLocalServer starts a single net/http server on [Addr] with graceful
-// shutdown on SIGINT / SIGTERM.  This function blocks until the server
-// stops.
+// StartLocalServer starts a single net/http server on config.Addr with
+// graceful shutdown on SIGINT and SIGTERM. This function blocks until the
+// server stops.
 func StartLocalServer() {
 	utilities.LogProgress("HTTP", "Starting local server", config.Addr)
 
@@ -99,14 +111,18 @@ func StartLocalServer() {
 	}
 }
 
-// logRequest wraps an http.HandlerFunc with a request log line.
+// logRequest wraps an http.HandlerFunc with a structured request-log entry.
+//
+// Parameters:
+//   - next: the handler to wrap.
+//
+// Returns:
+//   - http.HandlerFunc: the wrapped handler.
 func logRequest(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		utilities.LogProgress(
-			"http",
+		utilities.LogProgress("http",
 			r.Method+" "+r.URL.Path,
-			fmt.Sprintf("source=%s", r.RemoteAddr),
-		)
+			fmt.Sprintf("source=%s", r.RemoteAddr))
 		next(w, r)
 	}
 }

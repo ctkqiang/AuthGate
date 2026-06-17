@@ -190,7 +190,7 @@ func init() {
 			Severity: SeverityMedium,
 			Patterns: []*regexp.Regexp{
 				regexp.MustCompile(`(?i)(<form[^>]*action\s*=\s*['"]https?://)`),
-				regexp.MustCompile(`(?i)(<input[^>]*name\s*=\s*['"]_?(csrftoken|csrfmiddlewaretoken|authenticity_token|nonce)`),
+				regexp.MustCompile(`(?i)(<input[^>]*name\s*=\s*['"]_?(csrftoken|csrfmiddlewaretoken|authenticity_token|nonce))`),
 				regexp.MustCompile(`(?i)(\bcross-origin\b.*\b(blocked|denied|forbidden)\b)`),
 			},
 		},
@@ -210,7 +210,7 @@ func init() {
 				regexp.MustCompile(`(?i)(<!ENTITY\s+\w+\s+SYSTEM)`),
 				regexp.MustCompile(`(?i)(<!DOCTYPE[^>]*\[)`),
 				regexp.MustCompile(`(?i)(<\?xml[^>]*encoding\s*=)`),
-				regexp.MustCompile(`(?i)(<![CDATA\[)`),
+				regexp.MustCompile(`(?i)(<!\[CDATA\[)`),
 			},
 		},
 		// ── HTTP Header Injection — MEDIUM ──

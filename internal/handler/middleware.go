@@ -1,10 +1,3 @@
-// Package handler (middleware.go) provides request-level security
-// inspection that scans every incoming request for attack patterns
-// (SQL injection, XSS, path traversal, command injection, SSRF, etc.)
-// and tracks request rates for burst / flood detection.
-//
-// SecurityLogFunc and RateTracker are injected by main.go to avoid
-// import cycles with the aws/aliyun packages.
 package handler
 
 import (
@@ -18,12 +11,10 @@ import (
 	"time"
 )
 
-// SecurityLogFunc receives detected threat matches for routing to the
-// active cloud monitoring backend (CloudWatch / CloudMonitor).
+// SecurityLogFunc receives detected threat matches for cloud monitoring.
 var SecurityLogFunc func(method, path, srcIP, ua string, matches []security.ThreatMatch)
 
-// RateTracker is the global sliding-window rate monitor. Set by main.go
-// before the server starts. When nil, rate tracking is disabled.
+// RateTracker is the global sliding-window rate monitor.
 var RateTracker *security.RateTracker
 var rateOnce sync.Once
 
@@ -36,9 +27,8 @@ func initRateTracker() {
 }
 
 // SecurityMiddleware wraps an http.HandlerFunc with threat detection
-// and rate monitoring.  Detected threats and rate anomalies are routed
-// via SecurityLogFunc to CloudWatch (AWS) or CloudMonitor (Aliyun).
-// Requests are never blocked.
+// and rate monitoring. When a rate threshold is breached, the request
+// is blocked with HTTP 429 Too Many Requests.
 func SecurityMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		srcIP := r.Header.Get("X-Forwarded-For")
@@ -50,6 +40,18 @@ func SecurityMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// ── 1. Rate tracking ──
 		initRateTracker()
 		rateMatches := RateTracker.Record(security.RateEvent{IP: srcIP, Path: r.URL.Path})
+
+		// Block on HIGH or CRITICAL rate thresholds.
+		for _, m := range rateMatches {
+			if m.Severity >= security.SeverityHigh {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "60")
+				w.WriteHeader(http.StatusTooManyRequests)
+				io.WriteString(w, `{"status_code":429,"data":{"error":"rate limit exceeded","category":"`+m.Category+`"}}`)
+				metricsRecord("rate_blocked", 1)
+				return
+			}
+		}
 
 		// ── 2. Body scan ──
 		bodyBytes, err := io.ReadAll(r.Body)

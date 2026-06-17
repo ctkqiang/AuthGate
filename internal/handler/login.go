@@ -2,14 +2,30 @@ package handler
 
 import (
 	"authgate/internal/model"
+	"authgate/internal/security"
 	"authgate/internal/utilities"
 	"context"
 	"errors"
 	"fmt"
 )
 
-// Login validates credentials against the stored user record and issues
-// fresh access and refresh JWT tokens bound to the client IP and User-Agent.
+// Login validates credentials against the stored user record by looking up
+// the username via LookupUserFunc and comparing the supplied password against
+// the stored bcrypt hash. On success it issues a signed RS256 access token
+// (3600s TTL) and refresh token (604800s TTL) bound to the client IP and
+// User-Agent.
+//
+// Parameters:
+//   - req: the EmailPasswordAuthRequest decoded from the login request body.
+//   - ip: the client IP address for token binding.
+//   - ua: the client User-Agent header for token binding.
+//
+// Returns:
+//   - model.JwtResponse: access token, refresh token, expiry, event type,
+//     and actor metadata.
+//   - error: nil on success; "invalid username or password" for bad
+//     credentials, "internal error" for database failures, or key-loading
+//     errors.
 func Login(req model.EmailPasswordAuthRequest, ip, ua string) (model.JwtResponse, error) {
 	if req.Username == "" {
 		return model.JwtResponse{}, errors.New("username is required")
@@ -32,7 +48,7 @@ func Login(req model.EmailPasswordAuthRequest, ip, ua string) (model.JwtResponse
 	}
 
 	storedPassword, _ := record["password"].(string)
-	if storedPassword != req.Password {
+	if !security.CheckPassword(storedPassword, req.Password) {
 		return model.JwtResponse{}, errors.New("invalid username or password")
 	}
 

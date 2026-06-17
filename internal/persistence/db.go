@@ -1,9 +1,10 @@
-// Package persistence provides the user-persistence layer that bridges
-// the handler package to cloud database backends (DynamoDB / TableStore)
-// without creating import cycles.
+// Package persistence provides the user-persistence bridge between the
+// handler package and cloud database backends (AWS DynamoDB, Alibaba Cloud
+// TableStore). Functions detect the active backend automatically by checking
+// credentials and SDK readiness (Ready()).
 //
-// The entry point [PersistUser] is wired into the handler via
-// handler.PersistUserFunc in main.go.
+// Callback injection: LookupUser and PersistUser are wired into the handler
+// package via function pointers set by main.go, avoiding import cycles.
 package persistence
 
 import (
@@ -17,9 +18,17 @@ import (
 	"time"
 )
 
-// LookupUser detects the active database backend and retrieves a user
-// record by username. Returns nil if the user does not exist or no
-// backend is configured.
+// LookupUser detects the active database backend and retrieves a user record
+// by username. Returns nil, nil when the user does not exist or no backend is
+// configured.
+//
+// Parameters:
+//   - ctx: request-scoped context for cancellation.
+//   - username: the username primary key to look up.
+//
+// Returns:
+//   - map[string]interface{}: the stored record fields, or nil if not found.
+//   - error: non-nil only for infrastructure failures (SDK errors).
 func LookupUser(ctx context.Context, username string) (map[string]interface{}, error) {
 	awsCfg, _ := security.AWSCredentials()
 	aliCfg, _ := security.AliyunCredentials()
@@ -44,11 +53,18 @@ func LookupUser(ctx context.Context, username string) (map[string]interface{}, e
 	}
 }
 
-// PersistUser detects the active database backend (AWS DynamoDB or
-// Alibaba Cloud TableStore) and inserts the user record. If no backend
-// is configured the function succeeds silently.
-//
+// PersistUser detects the active database backend and inserts or updates the
+// user record. If no backend is configured the function succeeds silently.
 // AWS has priority when both providers are configured.
+//
+// Parameters:
+//   - ctx: request-scoped context for cancellation.
+//   - user: the model.User containing username, email, and hashed password.
+//   - jwtResp: the signed JwtResponse containing access and refresh tokens.
+//
+// Returns:
+//   - error: nil on success or when no backend is configured; non-nil on
+//     infrastructure failure.
 func PersistUser(ctx context.Context, user model.User, jwtResp model.JwtResponse) error {
 	awsCfg, _ := security.AWSCredentials()
 	aliCfg, _ := security.AliyunCredentials()
