@@ -1,0 +1,122 @@
+@startuml security_flow_ZH
+!theme plain
+title AuthGate — 安全检测与告警流程
+
+actor 客户端
+participant "SecurityMiddleware\n(中间件)" as MW
+participant "RateTracker\n(速率追踪)" as Rate
+participant "ScanRequest\n(模式扫描)" as Scan
+database "13 组攻击模式\n(~90 条正则)" as Patterns
+participant "SecurityLogFunc\n(回调函数)" as LogFunc
+participant "CloudWatch\n(aws/cloudwatch.go)" as CW
+participant "CloudMonitor\n(aliyun/cloudmonitor.go)" as CM
+participant "SNS / PagerDuty\n(告警通知)" as Alarm
+
+== 每个请求必经 ==
+客户端 -> MW : HTTP 请求
+
+== 第 1 层: 速率检测 ==
+MW -> Rate : Record(IP, Path)
+Rate -> Rate : 滑动窗口 60s\n每秒桶粒度
+
+note over Rate
+  5 级阈值:
+  ├─ RATE_ELEVATED_IP_PATH (低)    ≥10 次/60s 同一IP→同一路径
+  ├─ RATE_BURST_PATH (中)          ≥1000 次/60s 同一路径
+  ├─ RATE_BURST_IP_PATH (高)       ≥100 次/60s 同一IP→同一路径
+  ├─ RATE_BURST_IP (高)            ≥500 次/60s 同一IP
+  └─ RATE_STORM (严重)             ≥5000 次/60s 全局
+end note
+
+Rate --> MW : 速率告警 (如有)
+
+== 第 2 层: 攻击模式扫描 ==
+MW -> MW : io.ReadAll(r.Body) → 缓冲请求体
+MW -> Scan : ScanRequest(body, path, query, headers)
+
+Scan -> Patterns : 扫描 4 个源 × 13 组规则
+
+note over Patterns
+  严重 (25 条正则):
+  ├─ SQL_INJECTION     — UNION, DROP, OR '1'='1', SLEEP(), xp_cmdshell
+  └─ COMMAND_INJECTION — ;cat, |ls, `id`, $(whoami), &&wget
+
+  高危 (46 条正则):
+  ├─ XSS               — <script>, onerror=, javascript:, eval()
+  ├─ PATH_TRAVERSAL    — ../../, /etc/passwd, /proc/self/
+  ├─ SSRF              — 169.254.169.254, metadata.google.internal
+  ├─ FILE_INCLUSION    — php://, /wp-admin/, .ini?%00
+  ├─ NOSQL_INJECTION   — $gt, $where, $regex
+  ├─ SENSITIVE_FILE    — .env, .git/, config.json, id_rsa, Dockerfile
+  └─ XML_ATTACK        — <!ENTITY ... SYSTEM, <![CDATA[
+
+  中危 (15 条正则):
+  ├─ DIR_BRUTE_FORCE   — /admin, /wp-admin, /actuator/env, /jenkins
+  ├─ CROSS_ORIGIN      — CSRF token 模式
+  └─ HEADER_INJECTION  — \r\nLocation:, \r\nSet-Cookie:
+
+  低危 (2 条正则):
+  ├─ SCANNER_UA        — sqlmap, nikto, nessus, burp, zap, nmap
+  └─ EXCESSIVE_PARAMS  — &key=value 模式
+end note
+
+Scan --> MW : 模式匹配结果 (如有)
+
+== 第 3 层: 合并与路由 ==
+MW -> MW : all = 速率告警 + 模式匹配
+
+alt len(all) > 0
+    MW -> LogFunc : SecurityLogFunc(method, path, srcIP, ua, all)
+
+    group AWS Lambda 环境
+        LogFunc -> CW : LogSecurityEvent() → JSON → CloudWatch Logs
+        note over CW
+          结构化 JSON 日志:
+          {
+            "event": "security.threat",
+            "severity": "CRITICAL",
+            "category": "SQL_INJECTION",
+            "match_count": 3,
+            "path": "/auth/login",
+            "source_ip": "1.2.3.4",
+            "user_agent": "sqlmap/1.0",
+            "matches": [...]
+          }
+        end note
+
+        LogFunc -> CW : EmitSecurityMetric() → EMF 指标
+        note over CW
+          AuthGate/Security.ThreatDetected
+          维度: Category, Severity
+        end note
+    end
+
+    group 阿里云 FC 环境
+        LogFunc -> CM : LogSecurityEvent() → JSON → SLS
+    end
+end
+
+== 第 4 层: 告警通知 ==
+group CloudWatch 告警
+    CW -> CW : Metric Filter\n{ $.severity = "CRITICAL" }
+    CW -> CW : Alarm: count >= 1 per 1 min
+    CW -> Alarm : SNS → PagerDuty / Slack / 邮件
+    note over Alarm
+      严重 → PagerDuty (立即电话通知)
+      高危 → Slack #security-alerts
+      SQL注入 → 安全团队邮件
+      速率风暴 → PagerDuty + 钉钉
+    end note
+end
+
+group CloudMonitor 告警 (SLS)
+    CM -> CM : 告警查询\nseverity: CRITICAL | SELECT COUNT(*)
+    CM -> CM : 触发: cnt >= 1
+    CM -> Alarm : 短信 / 电话 / 飞书 / 钉钉
+end
+
+== 请求永不阻断 ==
+MW -> MW : next(w, r)
+note over MW : 纯检测模式\n阻断在 WAF / API Gateway 层
+
+@enduml

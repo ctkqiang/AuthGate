@@ -1,0 +1,115 @@
+@startuml full_startup_ZH
+!theme plain
+title AuthGate — 完整启动流程（5 阶段）
+
+participant "main.go" as Main
+participant "config\n(TOML 解析)" as Config
+participant "aws\n(STS 验证)" as AWS
+participant "aliyun\n(RAM 验证)" as Aliyun
+participant "authentication\n(密钥管理)" as Auth
+participant "security\n(RSA 生成)" as KeyGen
+participant "S3/OSS\n(对象存储)" as Storage
+participant "model\n(keys.go)" as Model
+participant "aws.Lambda\n(运行时)" as LambdaRT
+participant "aliyun.FC\n(运行时)" as FCRT
+participant "handler\n(中间件)" as Handler
+participant "persistence\n(数据库)" as Persist
+participant "service\n(HTTP Server)" as Server
+
+== 阶段 0: 加载配置 ==
+Main -> Config : LoadConfigurationFile("config.toml")
+Config --> Main : config map 已加载
+Main -> Main : SupportedProvider()\n读取 [supported_providers]\n→ [AWS, ALIYUN]
+
+== 阶段 1: SDK 初始化 ==
+Main -> AWS : Initialize(ctx)
+AWS -> AWS : STS GetCallerIdentity\n(验证 IAM 身份)
+alt IAM 有效
+    AWS -> AWS : Account 单例就绪
+    AWS --> Main : OK
+else IAM 无效/离线
+    AWS --> Main : error (仅记日志，不阻塞)
+end
+
+Main -> Aliyun : Initialize()
+Aliyun -> Aliyun : RAM GetCallerIdentity
+alt RAM 有效
+    Aliyun -> Aliyun : Account 单例就绪
+    Aliyun --> Main : OK
+else RAM 无效/离线
+    Aliyun --> Main : error (仅记日志，不阻塞)
+end
+
+== 阶段 2: JWT 密钥加载 ==
+Main -> Auth : EnsureKeys()
+Auth -> Auth : detectBackend()\n检查 aws.Ready() / aliyun.Ready()
+
+alt S3/OSS 已配置 && SDK 就绪
+    Auth -> Storage : GetObject(bucket, "private.pem")
+    Storage --> Auth : PEM 字节
+
+    alt 密钥存在
+        Auth -> Auth : ParsePrivateKeyPEM()
+        Auth -> Auth : ParsePublicKeyPEM()
+        note right of Auth : 从云存储加载完成
+    else 密钥不存在 (404)
+        Auth -> KeyGen : GenerateRSAKeyPair()
+        KeyGen --> Auth : private.pem + public.pem (RSA-2048)
+
+        alt isCloudRuntime() == true
+            Auth -> Storage : PutObject(bucket, "private.pem")
+            Auth -> Storage : PutObject(bucket, "public.pem")
+            note right of Auth : 上传完成，下次冷启动直接使用
+        else 本地模式
+            note right of Auth : 仅内存，不碰云存储
+        end
+    end
+else 无后端或 SDK 未就绪
+    Auth -> KeyGen : GenerateRSAKeyPair()
+    KeyGen --> Auth : private.pem + public.pem
+    note right of Auth : 仅内存 — 本地开发模式
+end
+
+Auth -> Model : PrivateKey = ..., PublicKey = ...
+Auth --> Main : 密钥就绪
+
+== 阶段 3: 运行时注册 ==
+Main -> LambdaRT : InitializeLambdaService()
+
+alt 检测到 Lambda 环境变量
+    LambdaRT -> LambdaRT : lambda.Start(HandleAPIGatewayEvent)
+    note over LambdaRT : 永久阻塞\n不再启动本地 server
+else 本地模式
+    LambdaRT --> Main : 立即返回
+end
+
+Main -> FCRT : InitializeFCService()
+
+alt 检测到 FC 环境变量
+    FCRT -> FCRT : fc.StartHttp(fcHTTPHandler)
+    note over FCRT : 永久阻塞\n不再启动本地 server
+else 本地模式
+    FCRT --> Main : 立即返回
+end
+
+== 阶段 4: 回调注入 ==
+Main -> Handler : PersistUserFunc = persistence.PersistUser
+Main -> Handler : LookupUserFunc = persistence.LookupUser
+Main -> Handler : SecurityLogFunc = func() {\n  aws.LogSecurityEvent() + aws.EmitSecurityMetric()\n  aliyun.LogSecurityEvent()\n}
+note right of Handler : 3 个回调全部注入\n零循环依赖
+
+== 阶段 5: 本地 HTTP Server ==
+alt IsLocalMode() == true
+    Main -> Server : StartLocalServer()
+    Server -> Server : mux := http.NewServeMux()
+    loop 遍历所有 Route
+        Server -> Server : mux.HandleFunc(path,\nSecurityMiddleware(logRequest(handler)))
+    end
+    Server -> Server : srv.ListenAndServe()\n0.0.0.0:8000
+    note over Server : SIGINT/SIGTERM 优雅关闭
+else 云端运行时已接管
+    Main -> Main : return
+    note over Main : 不会执行到这里
+end
+
+@enduml

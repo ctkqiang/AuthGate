@@ -1,0 +1,116 @@
+@startuml full_startup_EN
+!theme plain
+title AuthGate — Complete Startup Flow (5 Phases)
+
+participant "main.go" as Main
+participant "config\n(get_configuration.go)" as Config
+participant "aws\n(authorisation.go)" as AWS
+participant "aliyun\n(authorisation.go)" as Aliyun
+participant "authentication\n(get_keys.go)" as Auth
+participant "security\n(keygen.go)" as KeyGen
+participant "aws/s3.go" as S3
+participant "aliyun/oss.go" as OSS
+participant "model\n(keys.go)" as Model
+participant "aws\n(lambda.go)" as LambdaRT
+participant "aliyun\n(functions.go)" as FCRT
+participant "handler\n(middleware.go)" as Handler
+participant "persistence\n(db.go)" as Persist
+participant "service\n(server.go)" as Server
+
+== Phase 0: Load Config ==
+Main -> Config : LoadConfigurationFile("config.toml")
+Config --> Main : config map loaded
+Main -> Main : SupportedProvider()\nreads [supported_providers]\n→ [AWS, ALIYUN]
+
+== Phase 1: SDK Initialisation ==
+Main -> AWS : Initialize(ctx)
+AWS -> AWS : STS GetCallerIdentity\n(validates IAM)
+alt IAM valid
+    AWS -> AWS : Account singleton populated
+    AWS --> Main : OK
+else IAM invalid / offline
+    AWS --> Main : error (logged, not fatal)
+end
+
+Main -> Aliyun : Initialize()
+Aliyun -> Aliyun : RAM GetCallerIdentity
+alt RAM valid
+    Aliyun -> Aliyun : Account singleton populated
+    Aliyun --> Main : OK
+else RAM invalid / offline
+    Aliyun --> Main : error (logged, not fatal)
+end
+
+== Phase 2: JWT Key Loading ==
+Main -> Auth : EnsureKeys()
+Auth -> Auth : detectBackend()\nchecks aws.Ready() / aliyun.Ready()
+
+alt S3/OSS configured AND SDK Ready
+    Auth -> S3 : GetObject(bucket, "private.pem")
+    S3 --> Auth : PEM bytes
+
+    alt keys found
+        Auth -> Auth : ParsePrivateKeyPEM()
+        Auth -> Auth : ParsePublicKeyPEM()
+        note right of Auth : keys loaded from cloud storage
+    else keys not found (404)
+        Auth -> KeyGen : GenerateRSAKeyPair()
+        KeyGen --> Auth : private.pem + public.pem (RSA-2048)
+
+        alt isCloudRuntime() == true
+            Auth -> S3 : PutObject(bucket, "private.pem")
+            Auth -> S3 : PutObject(bucket, "public.pem")
+            note right of Auth : uploaded for next cold start
+        else local mode
+            note right of Auth : kept in memory only
+        end
+    end
+else no backend or SDK not Ready
+    Auth -> KeyGen : GenerateRSAKeyPair()
+    KeyGen --> Auth : private.pem + public.pem
+    note right of Auth : in-memory only — local dev mode
+end
+
+Auth -> Model : PrivateKey = ..., PublicKey = ...
+Auth --> Main : keys ready
+
+== Phase 3: Runtime Handler Registration ==
+Main -> LambdaRT : InitializeLambdaService()
+
+alt _LAMBDA_SERVER_PORT + AWS_LAMBDA_RUNTIME_API present
+    LambdaRT -> LambdaRT : lambda.Start(HandleAPIGatewayEvent)
+    note over LambdaRT : BLOCKS FOREVER\nserver never starts
+else local mode
+    LambdaRT --> Main : returns immediately
+end
+
+Main -> FCRT : InitializeFCService()
+
+alt FC_FUNCTION_NAME present
+    FCRT -> FCRT : fc.StartHttp(fcHTTPHandler)
+    note over FCRT : BLOCKS FOREVER\nserver never starts
+else local mode
+    FCRT --> Main : returns immediately
+end
+
+== Phase 4: Callback Injection ==
+Main -> Handler : handler.PersistUserFunc = persistence.PersistUser
+Main -> Handler : handler.LookupUserFunc = persistence.LookupUser
+Main -> Handler : handler.SecurityLogFunc = func() {\n  aws.LogSecurityEvent() + aws.EmitSecurityMetric()\n  aliyun.LogSecurityEvent()\n}
+note right of Handler : all 3 callbacks injected\nzero import cycles
+
+== Phase 5: Local HTTP Server ==
+alt IsLocalMode() == true
+    Main -> Server : StartLocalServer()
+    Server -> Server : mux := http.NewServeMux()
+    loop for each Route in Routes
+        Server -> Server : mux.HandleFunc(path,\nSecurityMiddleware(logRequest(handler)))
+    end
+    Server -> Server : srv.ListenAndServe()\n0.0.0.0:8000
+    note over Server : graceful shutdown\non SIGINT/SIGTERM
+else cloud runtime took over
+    Main -> Main : return
+    note over Main : never reached
+end
+
+@enduml

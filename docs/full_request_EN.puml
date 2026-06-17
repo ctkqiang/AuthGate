@@ -1,0 +1,111 @@
+@startuml full_request_EN
+!theme plain
+title AuthGate — Full Request Lifecycle (SQL Injection Login Attempt)
+
+actor "Attacker\n(1.2.3.4)" as Attacker
+participant "API Gateway" as APIGW
+participant "Lambda\nHandleAPIGatewayEvent" as Lambda
+participant "SecurityMiddleware\n(handler/middleware.go)" as MW
+participant "RateTracker\n(security/ratelimit.go)" as Rate
+participant "ScanRequest\n(security/monitor.go)" as Scan
+participant "SecurityLogFunc\n(injected callback)" as SecLog
+participant "CloudWatch\n(aws/cloudwatch.go)" as CW
+participant "CloudMonitor\n(aliyun/cloudmonitor.go)" as CM
+participant "MatchRoute\n(service/server.go)" as Router
+participant "AuthLogin\n(handler/handler.go)" as Handler
+participant "Login\n(handler/login.go)" as Login
+participant "LookupUserFunc\n(persistence/db.go)" as Lookup
+participant "DynamoDB\n/ TableStore" as DB
+participant "JWT.Sign\n(model/jwt.go)" as JWT
+participant "apiGatewayResponse\n(aws/lambda.go)" as Response
+
+== Attack ==
+Attacker -> APIGW : POST /auth/login\n{"username":"admin' OR '1'='1 --","password":"x"}
+APIGW -> Lambda : Invoke(APIGatewayEvent)\n{httpMethod, path, headers, body}
+
+== Event → http.Request ==
+Lambda -> Lambda : http.NewRequestWithContext()\n+ copy headers
+Lambda -> MW : SecurityMiddleware(handler)(w, req)
+
+== Security Layer (always runs FIRST) ==
+
+group Rate Limiting
+    MW -> Rate : Record(IP="1.2.3.4", Path="/auth/login")
+    Rate -> Rate : sliding window 60s / 60 buckets\nper IP+Path / per IP / per Path / global
+    alt threshold crossed?
+        note over Rate : RATE_BURST_IP_PATH (HIGH)\nif ≥100 req/60s
+        Rate --> MW : rate matches
+    else normal
+        Rate --> MW : no rate issue
+    end
+end
+
+group Body Buffering
+    MW -> MW : io.ReadAll(r.Body)
+    MW -> MW : r.Body = NopCloser(bytes.NewBuffer(bodyBytes))
+    note right of MW : buffer body so handler\ncan read it again
+end
+
+group Pattern Scanning (13 groups, ~90 regexes)
+    MW -> Scan : ScanRequest(body, path, query, headers)
+    Scan -> Scan : check body: "admin' OR '1'='1 --"
+    note over Scan : SQL_INJECTION regex matches:\n(?i)(\\bOR\\s+('|")\\d+...)
+    Scan -> Scan : check path: "/auth/login"
+    Scan -> Scan : check query: ""
+    Scan -> Scan : check headers: Content-Type, User-Agent...
+    Scan --> MW : [ThreatMatch{\n  Category: "SQL_INJECTION"\n  Severity: CRITICAL\n  Location: "body"\n  Sample: "admin' OR '1'='1 --"\n}]
+end
+
+group Threat Routing
+    MW -> SecLog : SecurityLogFunc(method, path, srcIP, ua, matches)
+    SecLog -> CW : LogSecurityEvent() → JSON to CloudWatch Logs
+    note right of CW : {\n  event:"security.threat",\n  severity:"CRITICAL",\n  category:"SQL_INJECTION",\n  source_ip:"1.2.3.4",\n  path:"/auth/login",\n  sample:"admin' OR '1'='1 --"\n}
+    SecLog -> CW : EmitSecurityMetric() → EMF\nAuthGate/Security.ThreatDetected
+    SecLog -> CM : LogSecurityEvent() → JSON to SLS
+end
+
+== Route Dispatch ==
+MW -> Router : MatchRoute("/auth/login")
+Router -> Router : iterate Routes → exact match
+Router --> MW : handler.AuthLogin
+
+== Business Logic ==
+MW -> Handler : AuthLogin(w, req)
+Handler -> Handler : json.Decode(body) → EmailPasswordAuthRequest
+Handler -> Login : Login(req, "1.2.3.4", "sqlmap/1.0")
+
+group User Lookup
+    Login -> Login : validate username / password non-empty
+    Login -> Lookup : LookupUserFunc(ctx, "admin' OR '1'='1 --")
+    Lookup -> Lookup : aws.Ready()?\nDynamoDB.GetById("Users", {username: "admin' ..."})
+    Lookup -> DB : GetItem / GetRow
+    DB --> Lookup : null (no such user)
+    Lookup --> Login : nil, nil
+end
+
+group Credential Check
+    Login -> Login : record == nil\n→ "invalid username or password"
+    Login --> Handler : error
+end
+
+Handler -> Handler : w.WriteHeader(401)
+Handler -> Handler : json.Encode(Response{401,\n"invalid username or password"})
+Handler --> Lambda : responseRecorder\n(statusCode=401, body=JSON)
+
+== Response Envelope ==
+Lambda -> Lambda : json.Unmarshal(w.body) → model.Response
+Lambda -> Response : apiGatewayResponse(401, resp)
+note over Response : injects 15 security headers:\nCSP, HSTS, XFO, XCTO,\nCORP, COEP, COOP,\nCORS, Permissions-Policy...
+Response --> Lambda : {statusCode, headers, body}
+
+Lambda --> APIGW : Lambda proxy response
+APIGW -> APIGW : unpack envelope
+APIGW --> Attacker : HTTP 401\n{"status_code":401,"data":{"error":"invalid username or password"}}
+
+== Monitoring (async, same time) ==
+CW -> CW : CloudWatch Alarm\n{ $.severity="CRITICAL" }\ncount >= 1 → SNS
+note over CW : → PagerDuty / Slack / Email
+
+CM -> CM : SLS Alert\nseverity: CRITICAL | SELECT COUNT(*)\ncnt >= 1 → 短信/飞书/钉钉
+
+@enduml

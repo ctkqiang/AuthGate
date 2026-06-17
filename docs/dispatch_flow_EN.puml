@@ -1,0 +1,69 @@
+@startuml dispatch_flow_EN
+!theme plain
+title AuthGate — Dispatch Layer Comparison (3 Runtimes, 1 Route Table)
+
+actor Client
+
+package "service.Routes (Single Source of Truth)" as Routes #LightBlue {
+    [GET /] as R1
+    [GET /health] as R2
+    [POST /auth/register] as R3
+    [POST /auth/login] as R4
+    [POST /auth/logout] as R5
+    [POST /auth/refresh] as R6
+    [POST /auth/provider/{name}] as R7
+}
+
+package "Local HTTP\n(service/server.go)" as Local #LightGreen {
+    [net/http.ServeMux] as Mux
+    [SecurityMiddleware] as MW1
+    [logRequest] as Log1
+    note right of MW1 : ANSI colour logs\nrate + pattern scan
+
+    Client --> Mux : HTTP :8000
+    Mux --> MW1
+    MW1 --> Log1
+    Log1 --> Routes
+    Routes --> Client : raw HTTP response\n(no envelope)
+}
+
+package "AWS Lambda\n(aws/lambda.go)" as Lambda #LightYellow {
+    [HandleAPIGatewayEvent] as LambdaHandler
+    [SecurityMiddleware] as MW2
+    [MatchRoute] as Match2
+    [responseRecorder] as Rec2
+    [apiGatewayResponse] as Env2
+    note right of Env2 : 15 security headers\n(CSP, HSTS, XFO, CORP...)
+
+    Client --> LambdaHandler : API Gateway\nProxy Event
+    LambdaHandler --> LambdaHandler : event → http.Request\n(reconstruct)
+    LambdaHandler --> MW2
+    MW2 --> Match2
+    Match2 --> Routes
+    Routes --> Rec2 : handler writes to\nresponseRecorder
+    Rec2 --> LambdaHandler : captured body+status
+    LambdaHandler --> LambdaHandler : json.Unmarshal(body)\n→ model.Response
+    LambdaHandler --> Env2 : apiGatewayResponse(status, resp)
+    Env2 --> Client : {statusCode, headers, body}\n→ API Gateway unpacks
+}
+
+package "Aliyun FC\n(aliyun/functions.go)" as FC #Lavender {
+    [fcHTTPHandler] as FCHandler
+    [DefaultSecurityHeaders] as Headers
+    [SecurityMiddleware] as MW3
+    note right of Headers : inject 15 headers\nbefore handler
+
+    Client --> FCHandler : FC HTTP Trigger
+    FCHandler --> Headers : inject headers
+    Headers --> MW3
+    MW3 --> Routes : iterate + prefix match
+    Routes --> Client : raw HTTP response\n(no envelope)
+}
+
+note bottom of Routes
+  All 3 runtimes share the SAME route table.
+  Adding a new endpoint = 1 entry in Routes.
+  No per-runtime boilerplate needed.
+end note
+
+@enduml

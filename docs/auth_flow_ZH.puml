@@ -1,0 +1,111 @@
+@startuml auth_flow_ZH
+!theme plain
+title AuthGate — 认证业务逻辑流程
+
+actor 客户端
+participant "AuthRegister\n注册" as Register
+participant "Registration\n注册逻辑" as RegLogic
+participant "AuthLogin\n登录" as LoginH
+participant "Login\n登录逻辑" as LoginLogic
+participant "AuthRefresh\n刷新" as RefreshH
+participant "Refresh\n刷新逻辑" as RefreshLogic
+participant "AuthWithProvider\n第三方登录" as ProviderH
+participant "AuthenticateWithProvider\n第三方逻辑" as ProvLogic
+participant "JWT\n令牌" as JWT
+participant "PrivateKey\n密钥" as Keys
+participant "PersistUser\n持久化" as Persist
+participant "LookupUser\n查用户" as Lookup
+database "DynamoDB\n/ TableStore" as DB
+
+== POST /auth/register 注册 ==
+
+客户端 -> Register : POST\n{Username, Email, Password}
+Register -> Register : json.Decode → User
+Register -> RegLogic : Registration(user, ip, ua)
+
+RegLogic -> RegLogic : 校验 username/email/password 非空
+RegLogic -> RegLogic : 检查 PrivateKey 已加载
+
+RegLogic -> JWT : NewAccessToken(subject, ip, ua)
+JWT --> RegLogic : accessJWT\n{exp=3600s, scopes=["api:access"]}
+
+RegLogic -> Keys : Sign(PrivateKey) RS256
+Keys --> RegLogic : accessToken 字符串
+
+RegLogic -> JWT : NewRefreshToken(subject, ip, ua)
+JWT --> RegLogic : refreshJWT\n{exp=604800s, scopes=["token:refresh"]}
+
+RegLogic -> Keys : Sign(PrivateKey) RS256
+Keys --> RegLogic : refreshToken 字符串
+
+RegLogic --> Register : JwtResponse
+
+Register -> Persist : PersistUserFunc(user, jwtResp)
+Persist -> DB : PutItem / PutRow\n{username, email, password, tokens}
+note right of Persist : best-effort\n失败仅记日志
+
+Register --> 客户端 : 200 {token, refresh_token, actor}
+
+== POST /auth/login 登录 ==
+
+客户端 -> LoginH : POST {username, password}
+LoginH -> LoginLogic : Login(req, ip, ua)
+
+LoginLogic -> LoginLogic : 校验字段非空
+LoginLogic -> Lookup : LookupUserFunc(username)
+Lookup -> DB : GetItem / GetRow
+
+alt 用户存在
+    DB --> Lookup : record
+    Lookup --> LoginLogic : 用户记录
+    LoginLogic -> LoginLogic : 密码比对
+
+    alt 密码正确
+        LoginLogic -> JWT : 签发 access + refresh JWT
+        LoginLogic --> LoginH : JwtResponse
+        LoginH --> 客户端 : 200
+    else 密码错误
+        LoginLogic --> LoginH : "用户名或密码错误"
+        LoginH --> 客户端 : 401
+    end
+else 用户不存在
+    Lookup --> LoginLogic : nil
+    LoginLogic --> LoginH : "用户名或密码错误"
+    LoginH --> 客户端 : 401
+end
+
+== POST /auth/refresh 刷新令牌 ==
+
+客户端 -> RefreshH : POST {refresh_token}
+RefreshH -> RefreshLogic : Refresh(token, ip, ua)
+
+RefreshLogic -> RefreshLogic : jwtlib.Parse(RS256, PublicKey)
+
+alt 令牌有效
+    RefreshLogic -> RefreshLogic : claims["scopes"] 含 "token:refresh"?
+
+    alt scope 正确
+        RefreshLogic -> JWT : 签发新 access + refresh
+        RefreshLogic --> RefreshH : JwtResponse
+        RefreshH --> 客户端 : 200 {新令牌对}
+    else scope 错误
+        RefreshLogic --> RefreshH : "token scope 不符"
+        RefreshH --> 客户端 : 401
+    end
+else 令牌无效/过期
+    RefreshLogic --> RefreshH : "refresh token 无效"
+    RefreshH --> 客户端 : 401
+end
+
+== POST /auth/provider/{name} 第三方登录 ==
+
+客户端 -> ProviderH : POST /auth/provider/google\n{subject, email}
+ProviderH -> ProviderH : extractProvider → "google"
+ProviderH -> ProviderH : supportedProviders["google"] ✓
+
+ProviderH -> ProvLogic : AuthenticateWithProvider("google", req)
+ProvLogic -> JWT : 签发 JWT (subject = 第三方身份)
+ProvLogic --> ProviderH : JwtResponse
+ProviderH --> 客户端 : 200
+
+@enduml

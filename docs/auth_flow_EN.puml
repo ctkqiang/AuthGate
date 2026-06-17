@@ -1,0 +1,132 @@
+@startuml auth_flow_EN
+!theme plain
+title AuthGate — Authentication Business Logic
+
+actor Client
+participant "AuthRegister\n/handler/handler.go" as Register
+participant "Registration\n/handler/register.go" as RegLogic
+participant "AuthLogin\n/handler/handler.go" as LoginH
+participant "Login\n/handler/login.go" as LoginLogic
+participant "AuthRefresh\n/handler/handler.go" as RefreshH
+participant "Refresh\n/handler/refresh.go" as RefreshLogic
+participant "AuthWithProvider\n/handler/handler.go" as ProviderH
+participant "AuthenticateWithProvider\n/handler/provider.go" as ProvLogic
+participant "JWT\n(model/jwt.go)" as JWT
+participant "PrivateKey\n(model/keys.go)" as Keys
+participant "PersistUser\n(persistence/db.go)" as Persist
+participant "LookupUser\n(persistence/db.go)" as Lookup
+database "DynamoDB\n/ TableStore" as DB
+
+== POST /auth/register ==
+
+Client -> Register : POST /auth/register\n{Username, Email, Password}
+Register -> Register : json.Decode(body) → User
+Register -> RegLogic : Registration(user, ip, ua)
+
+RegLogic -> RegLogic : validate username/email/password non-empty
+RegLogic -> RegLogic : build userCredential
+RegLogic -> RegLogic : check model.PrivateKey not nil
+
+RegLogic -> JWT : NewAccessToken(subject, ip, ua)
+JWT --> RegLogic : accessJWT {sub, iss="authgate", exp=now+3600,\nscopes=["api:access"], jti=UUID,\nip_address, user_agent}
+
+RegLogic -> Keys : accessJWT.Sign(PrivateKey)
+Keys --> RegLogic : accessTokenStr (RS256)
+
+RegLogic -> JWT : NewRefreshToken(subject, ip, ua)
+JWT --> RegLogic : refreshJWT {exp=now+604800,\nscopes=["token:refresh"]}
+
+RegLogic -> Keys : refreshJWT.Sign(PrivateKey)
+Keys --> RegLogic : refreshTokenStr (RS256)
+
+RegLogic --> Register : JwtResponse{access, refresh, expires, actor}
+
+Register -> Persist : PersistUserFunc(ctx, user, jwtResp)
+Persist -> Persist : aws.Ready()? / aliyun.Ready()?
+Persist -> DB : PutItem / PutRow\n{username, email, password,\naccess_token, refresh_token,\ncreated_at}
+note right of Persist : best-effort\nfailure logged, not blocking
+
+Register --> Client : 200 {token, refresh_token, expires_in,\nevent_type:"event.auth_register", actor}
+
+== POST /auth/login ==
+
+Client -> LoginH : POST /auth/login\n{username, password}
+LoginH -> LoginH : json.Decode(body) → EmailPasswordAuthRequest
+LoginH -> LoginLogic : Login(req, ip, ua)
+
+LoginLogic -> LoginLogic : validate username/password non-empty
+
+LoginLogic -> Lookup : LookupUserFunc(ctx, username)
+Lookup -> DB : GetItem / GetRow (by username)
+alt user found
+    DB --> Lookup : record {username, password, email, ...}
+    Lookup --> LoginLogic : record
+
+    LoginLogic -> LoginLogic : record["password"] == req.Password?
+
+    alt password matches
+        LoginLogic -> JWT : NewAccessToken + Sign → RS256
+        LoginLogic -> JWT : NewRefreshToken + Sign → RS256
+        LoginLogic --> LoginH : JwtResponse
+        LoginH --> Client : 200 {token, refresh_token, event_type:"event.auth_login"}
+    else password wrong
+        LoginLogic --> LoginH : "invalid username or password"
+        LoginH --> Client : 401
+    end
+else user not found
+    DB --> Lookup : null
+    Lookup --> LoginLogic : nil
+    LoginLogic --> LoginH : "invalid username or password"
+    LoginH --> Client : 401
+end
+
+== POST /auth/refresh ==
+
+Client -> RefreshH : POST /auth/refresh\n{refresh_token}
+RefreshH -> RefreshH : json.Decode(body)
+RefreshH -> RefreshLogic : Refresh(refreshTokenStr, ip, ua)
+
+RefreshLogic -> RefreshLogic : jwtlib.Parse(token, RS256, PublicKey)
+
+alt token valid
+    RefreshLogic -> RefreshLogic : claims["scopes"] contains "token:refresh"?
+    alt scope OK
+        RefreshLogic -> RefreshLogic : claims["sub"] → subject
+        RefreshLogic -> JWT : NewAccessToken + Sign → RS256
+        RefreshLogic -> JWT : NewRefreshToken + Sign → RS256
+        RefreshLogic --> RefreshH : JwtResponse
+        RefreshH --> Client : 200 {new access + new refresh,\nevent_type:"event.auth_refresh"}
+    else wrong scope
+        RefreshLogic --> RefreshH : "token does not have refresh scope"
+        RefreshH --> Client : 401
+    end
+else token invalid/expired
+    RefreshLogic --> RefreshH : "invalid or expired refresh token"
+    RefreshH --> Client : 401
+end
+
+== POST /auth/provider/{name} ==
+
+Client -> ProviderH : POST /auth/provider/google\n{subject, email}
+ProviderH -> ProviderH : extractProvider("/auth/provider/google") → "google"
+ProviderH -> ProviderH : supportedProviders["google"] → {GOOGLE, "Google"}
+
+alt provider supported
+    ProviderH -> ProvLogic : AuthenticateWithProvider("google", req)
+
+    ProvLogic -> ProvLogic : check model.PrivateKey not nil
+    ProvLogic -> ProvLogic : derive subject from body.subject or email
+    ProvLogic -> JWT : NewAccessToken + Sign → RS256
+    ProvLogic -> JWT : NewRefreshToken + Sign → RS256
+    ProvLogic --> ProviderH : JwtResponse
+    ProviderH --> Client : 200
+else provider unsupported
+    ProviderH --> Client : 401 "unsupported provider: facebook"
+end
+
+== POST /auth/logout ==
+
+Client -> ProviderH : POST /auth/logout\n{access_token}
+note over ProviderH : no-op — stateless JWT\nclient discards token
+
+@enduml

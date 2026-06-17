@@ -1,0 +1,67 @@
+@startuml dispatch_flow_ZH
+!theme plain
+title AuthGate — 三运行时分发对比（1 份路由表，3 种环境）
+
+actor 客户端
+
+package "service.Routes（唯一路由表）" as Routes #LightBlue {
+    [GET /] as R1
+    [GET /health] as R2
+    [POST /auth/register] as R3
+    [POST /auth/login] as R4
+    [POST /auth/logout] as R5
+    [POST /auth/refresh] as R6
+    [POST /auth/provider/{name}] as R7
+}
+
+package "本地 HTTP\n(service/server.go)" as Local #LightGreen {
+    [net/http.ServeMux] as Mux
+    [SecurityMiddleware] as MW1
+    note right of MW1 : ANSI 彩色日志\n速率 + 模式扫描
+
+    客户端 --> Mux : HTTP :8000
+    Mux --> MW1
+    MW1 --> Routes
+    Routes --> 客户端 : 原始 HTTP 响应\n（无信封）
+}
+
+package "AWS Lambda\n(aws/lambda.go)" as Lambda #LightYellow {
+    [HandleAPIGatewayEvent] as LambdaHandler
+    [SecurityMiddleware] as MW2
+    [MatchRoute] as Match2
+    [responseRecorder] as Rec2
+    [apiGatewayResponse] as Env2
+    note right of Env2 : 注入 15 个安全头\n(CSP, HSTS, XFO, CORP...)
+
+    客户端 --> LambdaHandler : API Gateway\n代理事件
+    LambdaHandler --> LambdaHandler : 事件 → http.Request\n(重构标准请求)
+    LambdaHandler --> MW2
+    MW2 --> Match2
+    Match2 --> Routes
+    Routes --> Rec2 : handler 写入\nresponseRecorder
+    Rec2 --> LambdaHandler : 捕获 body + status
+    LambdaHandler --> LambdaHandler : json.Unmarshal\n→ model.Response
+    LambdaHandler --> Env2 : apiGatewayResponse()
+    Env2 --> 客户端 : {statusCode, headers, body}\n→ API Gateway 解包
+}
+
+package "阿里云 FC\n(aliyun/functions.go)" as FC #Lavender {
+    [fcHTTPHandler] as FCHandler
+    [DefaultSecurityHeaders] as Headers
+    [SecurityMiddleware] as MW3
+    note right of Headers : handler 前注入\n15 个安全头
+
+    客户端 --> FCHandler : FC HTTP 触发器
+    FCHandler --> Headers : 注入安全头
+    Headers --> MW3
+    MW3 --> Routes : 遍历 + 前缀匹配
+    Routes --> 客户端 : 原始 HTTP 响应\n（无信封）
+}
+
+note bottom of Routes
+  三个环境共享同一张路由表。
+  新增端点 = Routes 中添加 1 条。
+  无需为每个环境单独配置。
+end note
+
+@enduml

@@ -1,0 +1,128 @@
+@startuml security_flow_EN
+!theme plain
+title AuthGate — Security Detection & Alerting Flow
+
+actor Client
+participant "SecurityMiddleware\n(handler/middleware.go)" as MW
+participant "RateTracker\n(security/ratelimit.go)" as Rate
+participant "ScanRequest\n(security/monitor.go)" as Scan
+database "13 Pattern Groups\n(~90 regexes)" as Patterns
+participant "SecurityLogFunc\n(injected callback)" as LogFunc
+participant "CloudWatch\n(aws/cloudwatch.go)" as CW
+participant "CloudMonitor\n(aliyun/cloudmonitor.go)" as CM
+participant "SNS / PagerDuty" as Alarm
+
+== Every Request ==
+Client -> MW : HTTP Request
+
+== Layer 1: Rate Limiting ==
+MW -> Rate : Record(IP, Path)
+Rate -> Rate : sliding window 60s\nper-second buckets
+
+note over Rate
+  5 thresholds:
+  ├─ RATE_ELEVATED_IP_PATH (LOW)     ≥10 req/60s same IP→same path
+  ├─ RATE_BURST_PATH (MEDIUM)        ≥1000 req/60s same path
+  ├─ RATE_BURST_IP_PATH (HIGH)       ≥100 req/60s same IP→same path
+  ├─ RATE_BURST_IP (HIGH)            ≥500 req/60s same IP
+  └─ RATE_STORM (CRITICAL)           ≥5000 req/60s global
+end note
+
+Rate --> MW : rate matches (if any)
+
+== Layer 2: Pattern Scanning ==
+MW -> MW : io.ReadAll(r.Body) → buffer body
+MW -> Scan : ScanRequest(body, path, query, headers)
+
+Scan -> Patterns : scan 4 sources × 13 groups
+
+note over Patterns
+  CRITICAL (25 regexes):
+  ├─ SQL_INJECTION  — UNION, DROP, OR '1'='1', SLEEP(), xp_cmdshell
+  └─ COMMAND_INJECTION — ;cat, |ls, `id`, $(whoami), &&wget
+
+  HIGH (46 regexes):
+  ├─ XSS              — <script>, onerror=, javascript:, eval(), document.cookie
+  ├─ PATH_TRAVERSAL   — ../../, /etc/passwd, /proc/self/
+  ├─ SSRF             — 169.254.169.254, metadata.google.internal
+  ├─ FILE_INCLUSION   — php://, /wp-admin/, .ini?%00
+  ├─ NOSQL_INJECTION  — $gt, $where, $regex
+  ├─ SENSITIVE_FILE   — .env, .git/, config.json, id_rsa, Dockerfile
+  ├─ XML_ATTACK       — <!ENTITY ... SYSTEM, <![CDATA[
+
+  MEDIUM (15 regexes):
+  ├─ DIR_BRUTE_FORCE  — /admin, /wp-admin, /actuator/env, /jenkins
+  ├─ CROSS_ORIGIN     — CSRF token patterns, cross-origin blocked
+  └─ HEADER_INJECTION — \r\nLocation:, \r\nSet-Cookie:
+
+  LOW (2 regexes):
+  ├─ SCANNER_UA       — sqlmap, nikto, nessus, burp, zap, nmap
+  └─ EXCESSIVE_PARAMS — &key=value patterns
+end note
+
+Scan --> MW : pattern matches (if any)
+
+== Layer 3: Merge & Route ==
+MW -> MW : all = rate matches + pattern matches
+
+alt len(all) > 0
+    MW -> LogFunc : SecurityLogFunc(method, path, srcIP, ua, all)
+
+    group AWS Lambda
+        LogFunc -> CW : LogSecurityEvent()
+        note over CW
+          Structured JSON → CloudWatch Logs:
+          {
+            "event": "security.threat",
+            "severity": "CRITICAL",
+            "category": "SQL_INJECTION",
+            "match_count": 3,
+            "path": "/auth/login",
+            "source_ip": "1.2.3.4",
+            "user_agent": "sqlmap/1.0",
+            "matches": [...]
+          }
+        end note
+
+        LogFunc -> CW : EmitSecurityMetric()
+        note over CW
+          EMF → CloudWatch Metric:
+          Namespace: AuthGate/Security
+          Metric: ThreatDetected (Count)
+          Dimensions: Category, Severity
+        end note
+    end
+
+    group Aliyun FC
+        LogFunc -> CM : LogSecurityEvent()
+        note over CM
+          Structured JSON → SLS:
+          same payload as CloudWatch
+        end note
+    end
+end
+
+== Layer 4: Alarm Chain ==
+group CloudWatch Alarms
+    CW -> CW : Metric Filter\n{ $.severity = "CRITICAL" }
+    CW -> CW : Alarm: count >= 1 per 1 min
+    CW -> Alarm : SNS → PagerDuty / Slack / Email
+    note over Alarm
+      CRITICAL → PagerDuty (page on-call)
+      HIGH     → Slack #security-alerts
+      SQL_INJECTION → Security team email
+      RATE_STORM → PagerDuty + DingTalk
+    end note
+end
+
+group CloudMonitor Alerts (SLS)
+    CM -> CM : Alert Query\nseverity: CRITICAL | SELECT COUNT(*)
+    CM -> CM : Trigger: cnt >= 1
+    CM -> Alarm : 短信 / 电话 / 飞书 / 钉钉
+end
+
+== Request NEVER blocked ==
+MW -> MW : next(w, r)
+note over MW : detection-only\nblocking at WAF / API Gateway layer
+
+@enduml
