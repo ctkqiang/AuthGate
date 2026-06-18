@@ -1,0 +1,206 @@
+openapi: "3.1.0"
+info:
+  title: AuthGate API
+  version: "2.0.0"
+  description: |
+    Multi-cloud unified authentication gateway.
+    One Go binary — AWS Lambda, Alibaba Cloud FC, local — shared route table.
+  contact:
+    name: ctkqiang
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+  - url: https://api.example.com
+    description: AWS Lambda / Aliyun FC (production)
+
+tags:
+  - name: System
+  - name: Auth
+  - name: Security
+
+paths:
+  /:
+    get:
+      tags: [System]
+      summary: Service info
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              example: { "service": "AuthGate", "status": "running" }
+
+  /health:
+    get:
+      tags: [System]
+      summary: Health check with optional dependency status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              example: { "status": "healthy", "dynamodb": "healthy", "s3": "healthy" }
+
+  /metrics:
+    get:
+      tags: [System]
+      summary: Service metrics
+      responses:
+        "200":
+          description: JSON metrics payload
+          content:
+            application/json:
+              example: { "requests_total": 10420, "errors_4xx": 12, "rate_blocked": 3, "goroutines": 24 }
+
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [Username, Email, Password]
+              properties:
+                Username: { type: string }
+                Email: { type: string, format: email }
+                Password: { type: string, minLength: 6 }
+      responses:
+        "200":
+          description: JWT tokens issued
+        "400": { description: Invalid request body }
+        "500": { description: Internal error }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with username and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: JWT tokens issued
+        "401":
+          description: Invalid credentials
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout — revokes access token
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                access_token: { type: string }
+      responses:
+        "200":
+          description: Token revoked
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: New token pair issued
+        "401":
+          description: Invalid or revoked refresh token
+
+  /auth/verify:
+    post:
+      tags: [Auth]
+      summary: Email verification
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                username: { type: string }
+                token: { type: string }
+      responses:
+        "200":
+          description: Verification token sent or confirmed
+
+  /auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request password reset
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                username: { type: string }
+      responses:
+        "200":
+          description: Reset link sent (prevents username enumeration)
+
+  /auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Confirm password reset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              required: [username, token, new_password]
+              properties:
+                username: { type: string }
+                token: { type: string }
+                new_password: { type: string, minLength: 6 }
+      responses:
+        "200":
+          description: Password updated
+
+  /auth/provider/{name}:
+    post:
+      tags: [Auth]
+      summary: Third-party login (google, github, weixin, douyin, ...)
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                subject: { type: string }
+                email: { type: string }
+      responses:
+        "200":
+          description: JWT tokens issued
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key

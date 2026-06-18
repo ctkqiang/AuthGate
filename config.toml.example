@@ -4,26 +4,63 @@ title = "AuthGate"
 host = "0.0.0.0"
 port = 8000
 
+# ── Database Backends (choose one or more) ──
+
 [database]
+# MySQL (local / self-hosted)
 host = "localhost"
+port = 3306
 user = "root"
 password = "your_password_here"
 dbname = "authgate"
-port = 3306
 max_connections = 50
 max_idle_connections = 10
 
+# Supabase PostgreSQL (cloud)
+# Uncomment and fill to use Supabase as the primary database.
+# [database.supabase]
+# host = "db.xxxxxxxxxxxx.supabase.co"
+# port = 5432
+# user = "postgres"
+# password = "your_supabase_db_password"
+# dbname = "postgres"
+# ssl_mode = "require"
+
+# ── Supported Cloud Providers ──
+
 [supported_providers]
-aliyun = true
 aws = true
+aliyun = true
 azure = false
 gcp = false
 tencent_cloud = false
+supabase = false      # set to true to use Supabase PostgreSQL + Storage
+firebase = false
+digital_ocean = false
+cloudflare = false
+huaweicloud = false
+
+# ── Auth Providers (third-party login) ──
+
+[auth_providers]
+google = false
+github = false
+weixin = false
+weibo = false
+douyin = false
+tiktok = false
+kuaishou = false
+gitcode = false
+supabase_auth = false  # Supabase Auth as identity provider
+
+# ── Provider Credentials ──
 
 [aws]
 region = "us-east-1"
 access_key_id = "your_aws_access_key_id"
 access_key_secret = "your_aws_access_key_secret"
+bucket = "authgate-keys"
+dynamodb_table = "Users"
 
 [aliyun]
 region = "cn-hangzhou"
@@ -31,3 +68,35 @@ access_key_id = "your_aliyun_access_key_id"
 access_key_secret = "your_aliyun_access_key_secret"
 bucket = "your-bucket-name"
 endpoint = "oss-cn-hangzhou.aliyuncs.com"
+tablestore_instance = "authgate"
+tablestore_table = "Users"
+
+# ── Supabase ──
+[supabase]
+url = "https://xxxxxxxxxxxx.supabase.co"
+anon_key = "your_supabase_anon_key"
+service_role_key = "your_supabase_service_role_key"
+jwt_secret = "your_supabase_jwt_secret"
+bucket = "authgate-keys"          # Supabase Storage bucket for .pem keys
+
+# ── JWT Signing Keys ──
+[keys]
+private_key_path = "private.pem"
+public_key_path = "public.pem"
+
+# ── Security ──
+[security]
+bcrypt_cost = 12                   # bcrypt hash cost factor
+rate_limit_enabled = true          # enable 429 blocking at rate threshold
+rate_limit_window_seconds = 60
+token_blacklist_enabled = true     # enable JTI blacklist on logout
+api_key_auth_enabled = false       # require X-API-Key header
+log_level = "INFO"                 # DEBUG / INFO / WARN / ERROR / VERBOSE
+
+# ── Email (for verification & password reset) ──
+# [email]
+# smtp_host = "smtp.resend.com"
+# smtp_port = 587
+# smtp_user = "resend"
+# smtp_password = "re_xxxxxx"
+# from_address = "noreply@yourdomain.com"
