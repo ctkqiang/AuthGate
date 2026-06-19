@@ -270,8 +270,17 @@ AuthGate/
 - **Go ≥ 1.26**
 - （可选）AWS 账号 + IAM 用户（S3 + DynamoDB + STS 权限）
 - （可选）阿里云账号 + RAM 用户（OSS + TableStore + RAM 权限）
+- **Docker + docker compose v2**（可选 — 一键本地开发）
 
-### 本地开发 — 零依赖
+### Docker Compose — 一键启动
+
+```bash
+docker compose up
+# AuthGate :8000 + LocalStack :4566 (S3 + DynamoDB 模拟)
+# 全部 10 个端点立即可用，零配置
+```
+
+### 裸机 — 零依赖
 
 ```bash
 cp config.toml.example config.toml
@@ -785,6 +794,28 @@ Access-Control-Expose-Headers: X-Request-ID, X-RateLimit-Remaining, X-RateLimit-
 | `github.com/aliyun/aliyun-tablestore-go-sdk` | — | TableStore GetRow / PutRow / UpdateRow |
 | `github.com/aliyun/fc-runtime-go-sdk` | v0.3.1 | FC 运行时（`fc.StartHttp`） |
 | `gorm.io/gorm` | v1.31.1 | ORM（MySQL 预留） |
+
+---
+
+## 项目统计
+
+| 指标 | 数值 |
+|---|---|
+| Go 源文件 | 44 |
+| API 端点 | 10 |
+| 单元测试 | 26（全部通过） |
+| 性能基准 | 8 |
+| 威胁检测模式 | 13 类，~90 条编译正则 |
+| 速率限制阈值 | 5 级 × 4 维度 |
+| 安全响应头 | 每响应 15 个 |
+| 云平台 | 10 个定义（AWS + 阿里云已实现） |
+| 第三方登录 | 8 种 |
+| PlantUML 图 | 20 张（中英文） |
+| Docker 镜像大小 | ~5 MB（Alpine，多阶段构建） |
+| Health 端点吞吐 | 220k req/s（M2） |
+| JWT 验证吞吐 | 8.8k req/s（RS256） |
+| JWT 签名吞吐 | 400 req/s（RS256） |
+| bcrypt 哈希时间 | ~580ms（cost=12） |
 
 ---
 

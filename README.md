@@ -39,7 +39,7 @@ Four layers, three core mechanisms:
         │            │            │           │
    ┌────▼───┐  ┌─────▼────┐  ┌────▼────┐  ┌──▼──────┐
    │Persist │  │ Lookup   │  │Security │  │ Routes  │  ← 3 callbacks + 1 table
-   │UserFunc│  │ UserFunc │  │ LogFunc │  │(7 routes)│     injected, zero cycles
+   │UserFunc│  │ UserFunc │  │ LogFunc │  │(10 routes)│     injected, zero cycles
    └────┬───┘  └────┬─────┘  └────┬────┘  └──┬──────┘
         │           │             │           │
    ┌────▼───────────▼─────────────▼───────────▼──────┐
@@ -271,8 +271,17 @@ AuthGate/
 - **Go ≥ 1.26**
 - (Optional) AWS account with IAM user (S3 + DynamoDB + STS permissions)
 - (Optional) Alibaba Cloud account with RAM user (OSS + TableStore + RAM permissions)
+- **Docker + docker compose v2** (optional — for one-command local dev)
 
-### Local Development — Zero Dependencies
+### Docker Compose — One Command
+
+```bash
+docker compose up
+# AuthGate :8000 + LocalStack :4566 (S3 + DynamoDB mock)
+# All 10 endpoints available immediately. Zero config.
+```
+
+### Bare-metal — Zero Dependencies
 
 ```bash
 cp config.toml.example config.toml
@@ -822,6 +831,28 @@ Current version stores passwords as-is in DynamoDB/TableStore. Production deploy
 | `github.com/aliyun/aliyun-tablestore-go-sdk` | — | TableStore GetRow / PutRow / UpdateRow |
 | `github.com/aliyun/fc-runtime-go-sdk` | v0.3.1 | FC runtime (`fc.StartHttp`) |
 | `gorm.io/gorm` | v1.31.1 | ORM (reserved for future MySQL support) |
+
+---
+
+## Project Stats
+
+| Metric | Value |
+|---|---|
+| Go source files | 44 |
+| API endpoints | 10 |
+| Unit tests | 26 (all passing) |
+| Benchmarks | 8 |
+| Threat detection patterns | 13 categories, ~90 compiled regexes |
+| Rate limiting thresholds | 5 levels × 4 dimensions |
+| Security response headers | 15 per response |
+| Cloud providers | 10 defined (AWS + Aliyun implemented) |
+| Third-party auth providers | 8 |
+| PlantUML diagrams | 20 (EN + ZH) |
+| Docker image size | ~5 MB (Alpine, multi-stage) |
+| Health endpoint throughput | 220k req/s (M2) |
+| JWT verify throughput | 8.8k req/s (RS256) |
+| JWT sign throughput | 400 req/s (RS256) |
+| bcrypt hash time | ~580ms (cost=12) |
 
 ---
 
